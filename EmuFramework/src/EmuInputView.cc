@@ -14,18 +14,19 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <emuframework/EmuInputView.hh>
-#include <emuframework/EmuInput.hh>
 #include <emuframework/VController.hh>
 #include <emuframework/EmuApp.hh>
+#include <emuframework/EmuOptions.hh>
 #include <imagine/gui/AlertView.hh>
 #include <emuframework/FilePicker.hh>
+#include "private.hh"
+#include "privateInput.hh"
 
 extern bool touchControlsAreOn;
-bool touchControlsApplicable();
 
 void EmuInputView::draw()
 {
-	vController.draw(touchControlsAreOn && touchControlsApplicable(), ffKeyPushed || ffToggleActive);
+	vController.draw(touchControlsAreOn && EmuSystem::touchControlsApplicable(), ffKeyPushed || ffToggleActive);
 }
 
 void EmuInputView::place()
@@ -49,32 +50,37 @@ void EmuInputView::updateFastforward()
 	fastForwardActive = ffKeyPushed || ffToggleActive;
 }
 
-void EmuInputView::inputEvent(Input::Event e)
+bool EmuInputView::inputEvent(Input::Event e)
 {
 	#ifdef CONFIG_EMUFRAMEWORK_VCONTROLS
 	if(e.isPointer())
 	{
 		auto &layoutPos = vControllerLayoutPos[mainWin.viewport().isPortrait() ? 1 : 0];
-		if(e.state == Input::PUSHED && layoutPos[VCTRL_LAYOUT_MENU_IDX].state != 0 && vController.menuBound.overlaps({e.x, e.y}))
+		if(e.pushed() && layoutPos[VCTRL_LAYOUT_MENU_IDX].state != 0 && vController.menuBound.overlaps(e.pos()))
 		{
 			viewStack.top().clearSelection();
-			restoreMenuFromGame();
-			return;
+			EmuApp::restoreMenuFromGame();
+			return true;
 		}
-		else if(e.state == Input::PUSHED && layoutPos[VCTRL_LAYOUT_FF_IDX].state != 0 && vController.ffBound.overlaps({e.x, e.y}))
+		else if(e.pushed() && layoutPos[VCTRL_LAYOUT_FF_IDX].state != 0 && vController.ffBound.overlaps(e.pos()))
 		{
 			ffToggleActive ^= true;
 			updateFastforward();
 		}
-		else if((touchControlsAreOn && touchControlsApplicable())
+		else if((touchControlsAreOn && EmuSystem::touchControlsApplicable())
 			|| vController.isInKeyboardMode())
 		{
 			vController.applyInput(e);
+			EmuSystem::handlePointerInputEvent(e, emuVideoLayer.gameRect());
+		}
+		else if(EmuSystem::handlePointerInputEvent(e, emuVideoLayer.gameRect()))
+		{
+			//logMsg("game consumed pointer input event");
 		}
 		#ifdef CONFIG_VCONTROLS_GAMEPAD
 		else if(!touchControlsAreOn && (uint)optionTouchCtrl == 2 && optionTouchCtrlShowOnTouch
 			&& !vController.isInKeyboardMode()
-			&& e.isTouch() && e.state == Input::PUSHED
+			&& e.isTouch() && e.pushed()
 			)
 		{
 			logMsg("turning on on-screen controls from touch input");
@@ -82,7 +88,7 @@ void EmuInputView::inputEvent(Input::Event e)
 			placeEmuViews();
 		}
 		#endif
-		return;
+		return true;
 	}
 	#else
 	if(e.isPointer())
@@ -92,70 +98,68 @@ void EmuInputView::inputEvent(Input::Event e)
 			viewStack.top()->clearSelection();
 			restoreMenuFromGame();
 		}
-		return;
+		return true;
 	}
 	#endif
 	if(e.isRelativePointer())
 	{
 		processRelPtr(e);
+		return true;
 	}
 	else
 	{
-		#if defined CONFIG_ENV_WEBOS && CONFIG_ENV_WEBOS_OS <= 2
-		if(e.state == Input::PUSHED && e.button == Input::Keycode::ESCAPE)
-		{
-			restoreMenuFromGame();
-			return;
-		}
-		#endif
-		assert(e.device);
-		const KeyMapping::ActionGroup &actionMap = keyMapping.inputDevActionTablePtr[e.device->idx][e.button];
+		assert(e.device());
+		const KeyMapping::ActionGroup &actionMap = keyMapping.inputDevActionTablePtr[e.device()->idx][e.mapKey()];
 		//logMsg("player %d input %s", player, Input::buttonName(e.map, e.button));
+		bool didAction = false;
 		iterateTimes(KeyMapping::maxKeyActions, i)
 		{
 			auto action = actionMap[i];
 			if(action != 0)
 			{
 				using namespace EmuControls;
+				didAction = true;
 				action--;
 
 				switch(action)
 				{
 					bcase guiKeyIdxFastForward:
 					{
-						ffKeyPushed = e.state == Input::PUSHED;
+						ffKeyPushed = e.pushed();
 						updateFastforward();
 						logMsg("fast-forward key state: %d", ffKeyPushed);
 					}
 
 					bcase guiKeyIdxLoadGame:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						logMsg("open load game menu from key event");
-						restoreMenuFromGame();
+						EmuApp::restoreMenuFromGame();
 						viewStack.popToRoot();
-						auto &fPicker = *new EmuFilePicker{window(), false};
-						viewStack.pushAndShow(fPicker, e, false);
-						return;
+						auto &fPicker = *EmuFilePicker::makeForLoading(attachParams());
+						pushAndShow(fPicker, e, false);
+						return true;
 					}
 
 					bcase guiKeyIdxMenu:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						logMsg("open menu from key event");
-						restoreMenuFromGame();
-						return;
+						EmuApp::restoreMenuFromGame();
+						return true;
 					}
 
 					bcase guiKeyIdxSaveState:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						static auto doSaveState =
 							[]()
 							{
-								int ret = EmuSystem::saveState();
-								if(ret != STATE_RESULT_OK)
-									popup.postError(stateResultToStr(ret));
+								if(auto err = EmuApp::saveStateWithSlot(EmuSystem::saveStateSlot);
+									err)
+								{
+									popup.printf(4, true, "Save State: %s", err->what());
+								}
 								else
 									popup.post("State Saved");
 							};
@@ -166,7 +170,7 @@ void EmuInputView::inputEvent(Input::Event e)
 						}
 						else
 						{
-							auto &ynAlertView = *new YesNoAlertView{window(), "Really Overwrite State?"};
+							auto &ynAlertView = *new YesNoAlertView{attachParams(), "Really Overwrite State?"};
 							ynAlertView.setOnYes(
 								[](TextMenuItem &, View &view, Input::Event e)
 								{
@@ -181,24 +185,24 @@ void EmuInputView::inputEvent(Input::Event e)
 									startGameFromMenu();
 								});
 							modalViewController.pushAndShow(ynAlertView, e);
-							restoreMenuFromGame();
+							EmuApp::restoreMenuFromGame();
 						}
-						return;
+						return true;
 					}
 
 					bcase guiKeyIdxLoadState:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
-						int ret = EmuSystem::loadState();
-						if(ret != STATE_RESULT_OK && ret != STATE_RESULT_OTHER_ERROR)
+						if(auto err = EmuApp::loadStateWithSlot(EmuSystem::saveStateSlot);
+							err)
 						{
-							popup.postError(stateResultToStr(ret));
+							popup.printf(4, true, "Load State: %s", err->what());
 						}
-						return;
+						return true;
 					}
 
 					bcase guiKeyIdxDecStateSlot:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						EmuSystem::saveStateSlot--;
 						if(EmuSystem::saveStateSlot < -1)
@@ -207,7 +211,7 @@ void EmuInputView::inputEvent(Input::Event e)
 					}
 
 					bcase guiKeyIdxIncStateSlot:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						auto prevSlot = EmuSystem::saveStateSlot;
 						EmuSystem::saveStateSlot++;
@@ -217,25 +221,25 @@ void EmuInputView::inputEvent(Input::Event e)
 					}
 
 					bcase guiKeyIdxGameScreenshot:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						emuVideo.takeGameScreenshot();
-						return;
+						return true;
 					}
 
 					bcase guiKeyIdxExit:
-					if(e.state == Input::PUSHED)
+					if(e.pushed())
 					{
 						logMsg("request exit from key event");
-						auto &ynAlertView = *new YesNoAlertView{window(), "Really Exit?"};
+						auto &ynAlertView = *new YesNoAlertView{attachParams(), "Really Exit?"};
 						ynAlertView.setOnYes(
 							[](TextMenuItem &, View &view, Input::Event e)
 							{
 								Base::exit();
 							});
 						modalViewController.pushAndShow(ynAlertView, e);
-						restoreMenuFromGame();
-						return;
+						EmuApp::restoreMenuFromGame();
+						return true;
 					}
 
 					bdefault:
@@ -246,7 +250,7 @@ void EmuInputView::inputEvent(Input::Event e)
 						//logMsg("action %d -> %d, pushed %d", action, sysAction, e.state == Input::PUSHED);
 						if(turbo)
 						{
-							if(e.state == Input::PUSHED)
+							if(e.pushed())
 							{
 								turboActions.addEvent(sysAction);
 							}
@@ -255,12 +259,13 @@ void EmuInputView::inputEvent(Input::Event e)
 								turboActions.removeEvent(sysAction);
 							}
 						}
-						EmuSystem::handleInputAction(e.state, sysAction);
+						EmuSystem::handleInputAction(e.state(), sysAction);
 					}
 				}
 			}
 			else
 				break;
 		}
+		return didAction;
 	}
 }

@@ -34,7 +34,6 @@ struct TurboInput
 	std::array<Action, 5> activeAction{};
 
 	constexpr TurboInput() {}
-	void init();
 	void addEvent(uint action);
 	void removeEvent(uint action);
 };

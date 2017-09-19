@@ -25,15 +25,15 @@ extern "C"
 
 CLINK FILE *zfile_fopen(const char *path, const char *mode)
 {
-	if(hasArchiveExtension(path))
+	if(EmuApp::hasArchiveExtension(path))
 	{
 		if(strchr(mode, 'w'))
 		{
 			logErr("opening archive %s with write mode not supported", path);
 			return nullptr;
 		}
-		CallResult res = OK;
-		for(auto &entry : FS::ArchiveIterator{path, res})
+		std::error_code ec{};
+		for(auto &entry : FS::ArchiveIterator{path, ec})
 		{
 			if(entry.type() == FS::file_type::directory)
 			{
@@ -43,10 +43,10 @@ CLINK FILE *zfile_fopen(const char *path, const char *mode)
 			logMsg("archive file entry:%s", name);
 			if(EmuSystem::defaultFsFilter(name))
 			{
-				return GenericIO{entry.moveIO().moveToMapIO()}.moveToFileStream(mode);
+				return entry.moveIO().moveToMapIO().makeGeneric().moveToFileStream(mode);
 			}
 		}
-		if(res != OK)
+		if(ec)
 		{
 			logErr("error opening archive:%s", path);
 			return nullptr;

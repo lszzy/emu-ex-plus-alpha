@@ -18,7 +18,6 @@
 #include <imagine/gfx/GfxSprite.hh>
 #include <emuframework/VideoImageOverlay.hh>
 #include <emuframework/VideoImageEffect.hh>
-#include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuVideo.hh>
 
 struct AppWindowData;
@@ -26,29 +25,15 @@ struct AppWindowData;
 class EmuVideoLayer
 {
 public:
-	VideoImageOverlay vidImgOverlay{};
-	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
-	VideoImageEffect vidImgEffect{};
-	#endif
-	EmuVideo &video;
-
-private:
-	Gfx::Sprite disp{};
-	IG::WindowRect gameRect_{};
-	Gfx::GCRect gameRectG{};
-	bool useLinearFilter = true;
-
-	void compileDefaultPrograms();
-
-public:
-	constexpr EmuVideoLayer(EmuVideo &video): video{video} {}
-	void init();
-	void deinit();
+	EmuVideoLayer(EmuVideo &video);
 	void place(const IG::WindowRect &viewportRect, const Gfx::ProjectionPlane &projP, bool onScreenControlsOverlay);
 	void draw(const Gfx::ProjectionPlane &projP);
+	void setOverlay(uint effect);
+	void setOverlayIntensity(Gfx::GC intensity);
 	void placeOverlay();
-	void placeEffect();
 	void setEffect(uint effect);
+	void setEffectBitDepth(uint bits);
+	void placeEffect();
 	void setLinearFilter(bool on);
 	void resetImage();
 
@@ -56,4 +41,17 @@ public:
 	{
 		return gameRect_;
 	}
+
+private:
+	VideoImageOverlay vidImgOverlay{};
+	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
+	VideoImageEffect vidImgEffect{};
+	#endif
+	EmuVideo &video;
+	Gfx::Sprite disp{};
+	IG::WindowRect gameRect_{};
+	Gfx::GCRect gameRectG{};
+	bool useLinearFilter = true;
+
+	void compileDefaultPrograms();
 };

@@ -16,13 +16,17 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <cstdio>
+#include <system_error>
 #include <imagine/gfx/GfxText.hh>
 #include <imagine/gfx/GeomRect.hh>
 #include <imagine/base/Timer.hh>
 
+
+
 class MsgPopup
 {
 private:
+	Gfx::Renderer &r;
 	Gfx::Text text{};
 	Gfx::ProjectionPlane projP{};
 	Base::Timer unpostTimer{};
@@ -32,15 +36,18 @@ private:
 	void postContent(int secs, bool error);
 
 public:
-	MsgPopup() {}
-	void init();
+	MsgPopup(Gfx::Renderer &r);
+	void setFace(Gfx::GlyphTextureSet &face);
 	void clear();
 	void place(const Gfx::ProjectionPlane &projP);
 	void unpost();
 	void post(const char *msg, int secs = 3, bool error = false);
 	void postError(const char *msg, int secs = 3);
+	void post(const char *prefix, const std::system_error &err, int secs = 3);
+	void post(const char *prefix, std::error_code ec, int secs = 3);
 	void draw();
 
 	[[gnu::format(printf, 4, 5)]]
 	void printf(uint secs, bool error, const char *format, ...);
+	void vprintf(uint secs, bool error, const char *format, va_list args);
 };

@@ -28,29 +28,29 @@ public:
 	using IOUtils::seek;
 
 	constexpr PosixIO() {}
-	~PosixIO() override;
+	~PosixIO() final;
 	PosixIO(PosixIO &&o);
 	PosixIO &operator=(PosixIO &&o);
-	operator GenericIO();
-	CallResult open(const char *path, uint mode = 0);
-	CallResult create(const char *path, uint mode = 0)
+	GenericIO makeGeneric();
+	std::error_code open(const char *path, uint mode = 0);
+	std::error_code create(const char *path, uint mode = 0)
 	{
 		mode |= OPEN_WRITE | OPEN_CREATE;
 		return open(path, mode);
 	}
 	int fd() const;
 
-	ssize_t read(void *buff, size_t bytes, CallResult *resultOut) override;
-	ssize_t readAtPos(void *buff, size_t bytes, off_t offset, CallResult *resultOut) override;
-	ssize_t write(const void *buff, size_t bytes, CallResult *resultOut) override;
-	CallResult truncate(off_t offset) override;
-	off_t seek(off_t offset, IO::SeekMode mode, CallResult *resultOut) override;
-	void close() override;
-	void sync() override;
-	size_t size() override;
-	bool eof() override;
-	void advise(off_t offset, size_t bytes, Advice advice) override;
-	explicit operator bool() override;
+	ssize_t read(void *buff, size_t bytes, std::error_code *ecOut) final;
+	ssize_t readAtPos(void *buff, size_t bytes, off_t offset, std::error_code *ecOut) final;
+	ssize_t write(const void *buff, size_t bytes, std::error_code *ecOut) final;
+	std::error_code truncate(off_t offset) final;
+	off_t seek(off_t offset, IO::SeekMode mode, std::error_code *ecOut) final;
+	void close() final;
+	void sync() final;
+	size_t size() final;
+	bool eof() final;
+	void advise(off_t offset, size_t bytes, Advice advice) final;
+	explicit operator bool() final;
 
 protected:
 	int fd_ = -1;
@@ -60,4 +60,4 @@ protected:
 	PosixIO &operator=(const PosixIO &) = default;
 };
 
-CallResult openPosixMapIO(BufferMapIO &io, int fd);
+std::error_code openPosixMapIO(BufferMapIO &io, IO::AccessHint access, int fd);

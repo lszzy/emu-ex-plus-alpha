@@ -17,15 +17,19 @@
 
 #include <imagine/gui/FSPicker.hh>
 #include <imagine/logger/logger.h>
+#include <imagine/util/math/int.hh>
+#include <string>
 
-// FSNavView
-
-void FSPicker::FSNavView::init(ResourceFace *face, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes, bool singleDir)
+FSPicker::FSPicker(ViewAttachParams attach, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes,
+	FilterFunc filter,  bool singleDir, Gfx::GlyphTextureSet *face):
+	View{attach},
+	filter{filter},
+	tbl{attach, text},
+	faceRes{face},
+	navV{attach.renderer, face, singleDir ? nullptr : backRes, closeRes},
+	singleDir{singleDir}
 {
-	if(singleDir)
-		backRes = nullptr;
-	BasicNavView::init(face, backRes, closeRes);
-	//logMsg("has back:%p close:%p", leftSpr.img, rightSpr.img);
+	msgText = {msgStr.data(), face};
 	const Gfx::LGradientStopDesc fsNavViewGrad[]
 	{
 		{ .0, Gfx::VertexColorPixelFormat.build(.5, .5, .5, 1.) },
@@ -34,144 +38,126 @@ void FSPicker::FSNavView::init(ResourceFace *face, Gfx::PixmapTexture *backRes, 
 		{ .97, Gfx::VertexColorPixelFormat.build(.35 * .4, .35 * .4, .35 * .4, 1.) },
 		{ 1., Gfx::VertexColorPixelFormat.build(.5, .5, .5, 1.) },
 	};
-	setBackgroundGradient(fsNavViewGrad);
-}
-
-void FSPicker::FSNavView::draw(const Base::Window &win, const Gfx::ProjectionPlane &projP)
-{
-	using namespace Gfx;
-	setBlendMode(0);
-	noTexProgram.use(projP.makeTranslate());
-	bg.draw();
-	setColor(COLOR_WHITE);
-	texAlphaReplaceProgram.use();
-	if(text.xSize > projP.unprojectXSize(textRect) - TableView::globalXIndent*2)
-	{
-		setClipRectBounds(win, textRect);
-		setClipRect(1);
-		text.draw(projP.unProjectRect(textRect).pos(RC2DO) - GP{TableView::globalXIndent, 0}, RC2DO, projP);
-		setClipRect(0);
-	}
-	else
-	{
-		text.draw(projP.unProjectRect(textRect).pos(LC2DO) + GP{TableView::globalXIndent, 0}, LC2DO, projP);
-	}
-	if(leftSpr.image())
-	{
-		if(leftBtnActive)
+	navV.setBackgroundGradient(fsNavViewGrad);
+	navV.centerTitle = false;
+	navV.setOnPushLeftBtn(
+		[this](Input::Event e)
 		{
-			setColor(COLOR_WHITE);
-			setBlendMode(BLEND_MODE_ALPHA);
-			TextureSampler::bindDefaultNearestMipClampSampler();
-			leftSpr.useDefaultProgram(IMG_MODE_MODULATE, projP.makeTranslate(projP.unProjectRect(leftBtn).pos(C2DO)));
-			leftSpr.draw();
-		}
-	}
-	if(rightSpr.image())
-	{
-		if(rightBtnActive)
+			onLeftNavBtn(e);
+		});
+	navV.setOnPushRightBtn(
+		[this](Input::Event e)
 		{
-			setColor(COLOR_WHITE);
-			setBlendMode(BLEND_MODE_ALPHA);
-			TextureSampler::bindDefaultNearestMipClampSampler();
-			rightSpr.useDefaultProgram(IMG_MODE_MODULATE, projP.makeTranslate(projP.unProjectRect(rightBtn).pos(C2DO)));
-			rightSpr.draw();
-		}
-	}
-}
-
-void FSPicker::FSNavView::setTitle(const char *str)
-{
-	string_copy(titleStr, str);
-	NavView::setTitle(titleStr.data());
-}
-
-// FSPicker
-
-FSPicker::FSPicker(Base::Window &win, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes,
-	FilterFunc filter,  bool singleDir, ResourceFace *face):
-	View{win},
-	filter{filter},
-	tbl{win, text},
-	faceRes{face},
-	singleDir{singleDir}
-{
-	navV.init(face, backRes, closeRes, singleDir);
+			onRightNavBtn(e);
+		});
+	navV.setOnPushMiddleBtn(
+		[this](Input::Event e)
+		{
+			if(!this->singleDir)
+			{
+				changeDirByInput(Base::storagePath().data(), true, e);
+			}
+		});
 }
 
 void FSPicker::place()
 {
-	navV.viewRect.setPosRel({viewFrame.x, viewFrame.y}, {viewFrame.xSize(), int(faceRes->nominalHeight() * 1.75)}, LT2DO);
+	navV.viewRect().setPosRel({viewFrame.x, viewFrame.y}, {viewFrame.xSize(), int(faceRes->nominalHeight() * 1.75)}, LT2DO);
 	IG::WindowRect tableFrame = viewFrame;
-	tableFrame.setYPos(navV.viewRect.yPos(LB2DO));
-	tableFrame.y2 -= navV.viewRect.ySize();
+	tableFrame.setYPos(navV.viewRect().yPos(LB2DO));
+	tableFrame.y2 -= navV.viewRect().ySize();
 	tbl.setViewRect(tableFrame, projP);
 	tbl.place();
-	navV.place(projP);
+	navV.place(renderer(), projP);
+	msgText.compile(renderer(), projP);
 }
 
 void FSPicker::changeDirByInput(const char *path, bool forcePathChange, Input::Event e)
 {
-	if(setPath(path, forcePathChange, e) != OK && !forcePathChange)
+	auto ec = setPath(path, forcePathChange, e);
+	if(ec && !forcePathChange)
 		return;
 	place();
 	postDraw();
 }
 
+void FSPicker::setOnChangePath(OnChangePathDelegate del)
+{
+	onChangePath_ = del;
+}
+
 void FSPicker::setOnSelectFile(OnSelectFileDelegate del)
 {
-	onSelectFileD = del;
+	onSelectFile_ = del;
 }
 
 void FSPicker::setOnClose(OnCloseDelegate del)
 {
-	onCloseD = del;
+	onClose_ = del;
 }
 
 void FSPicker::onLeftNavBtn(Input::Event e)
 {
-	changeDirByInput("..", true, e);
+	changeDirByInput(FS::dirname(currPath).data(), true, e);
 }
 
 void FSPicker::onRightNavBtn(Input::Event e)
 {
-	onCloseD.callCopy(*this, e);
+	onClose_.callCopy(*this, e);
 }
 
 void FSPicker::setOnPathReadError(OnPathReadError del)
 {
-	onPathReadError = del;
+	onPathReadError_ = del;
 }
 
-void FSPicker::inputEvent(Input::Event e)
+bool FSPicker::inputEvent(Input::Event e)
 {
-	if(e.isDefaultCancelButton() && e.state == Input::PUSHED)
+	if(e.isDefaultCancelButton() && e.state() == Input::PUSHED)
 	{
-		onCloseD.callCopy(*this, e);
-		return;
+		onClose_.callCopy(*this, e);
+		return true;
 	}
-
-	const char* dirChange = 0;
-	if(!singleDir && e.state == Input::PUSHED && e.isDefaultLeftButton())
+	if(!singleDir && e.state() == Input::PUSHED && e.isDefaultLeftButton())
 	{
 		logMsg("going up a dir");
-		changeDirByInput("..", true, e);
+		changeDirByInput(FS::dirname(currPath).data(), true, e);
+		return true;
 	}
-	else if(e.isPointer() && navV.viewRect.overlaps({e.x, e.y}) && !tbl.isDoingScrollGesture())
+	else if(!singleDir && (e.pushedKey(Input::Keycode::GAME_B) || e.pushedKey(Input::Keycode::F1)))
 	{
-		navV.inputEvent(e);
-		return;
+		changeDirByInput(Base::storagePath().data(), true, e);
+		return true;
+	}
+	else if(e.isPointer() && navV.viewRect().overlaps(e.pos()) && !tbl.isDoingScrollGesture())
+	{
+		return navV.inputEvent(e);
 	}
 	else
 	{
-		tbl.inputEvent(e);
+		return tbl.inputEvent(e);
 	}
+	return false;
 }
 
 void FSPicker::draw()
 {
-	tbl.draw();
-	navV.draw(window(), projP);
+	auto &r = renderer();
+	if(dir.size())
+	{
+		tbl.draw();
+	}
+	else
+	{
+		using namespace Gfx;
+		r.setColor(COLOR_WHITE);
+		r.texAlphaProgram.use(r, projP.makeTranslate());
+		auto textRect = tbl.viewRect();
+		if(IG::isOdd(textRect.ySize()))
+			textRect.y2--;
+		msgText.draw(r, projP.unProjectRect(textRect).pos(C2DO), C2DO, projP);
+	}
+	navV.draw(r, window(), projP);
 }
 
 void FSPicker::onAddedToController(Input::Event e)
@@ -179,20 +165,23 @@ void FSPicker::onAddedToController(Input::Event e)
 	tbl.onAddedToController(e);
 }
 
-CallResult FSPicker::setPath(const char *path, bool forcePathChange, Input::Event e)
+std::error_code FSPicker::setPath(const char *path, bool forcePathChange, Input::Event e)
 {
 	assert(path);
-	CallResult res = OK;
+	auto prevPath = currPath;
+	std::error_code ec{};
 	{
-		auto dirIt = FS::directory_iterator{path, res};
-		if(res != OK)
+		auto dirIt = FS::directory_iterator{path, ec};
+		if(ec)
 		{
 			logErr("can't open %s", path);
-			onPathReadError.callSafe(*this, res);
 			if(!forcePathChange)
-				return res;
+			{
+				onPathReadError_.callSafe(*this, ec);
+				return ec;
+			}
 		}
-		FS::current_path(path);
+		string_copy(currPath, path);
 		dir.clear();
 		for(auto &entry : dirIt)
 		{
@@ -207,18 +196,21 @@ CallResult FSPicker::setPath(const char *path, bool forcePathChange, Input::Even
 	text.clear();
 	if(dir.size())
 	{
+		msgStr = {};
 		text.reserve(dir.size());
 		iterateTimes(dir.size(), i)
 		{
-			bool isDir = FS::status(dir[i].data()).type() == FS::file_type::directory;
+			auto filePath = makePathString(dir[i].data());
+			bool isDir = FS::status(filePath.data()).type() == FS::file_type::directory;
 			if(isDir)
 			{
 				text.emplace_back(dir[i].data(),
 					[this, i](TextMenuItem &, View &, Input::Event e)
 					{
 						assert(!singleDir);
-						logMsg("going to dir %s", dir[i].data());
-						changeDirByInput(dir[i].data(), false, e);
+						auto filePath = makePathString(dir[i].data());
+						logMsg("going to dir %s", filePath.data());
+						changeDirByInput(filePath.data(), false, e);
 					});
 			}
 			else
@@ -226,20 +218,39 @@ CallResult FSPicker::setPath(const char *path, bool forcePathChange, Input::Even
 				text.emplace_back(dir[i].data(),
 					[this, i](TextMenuItem &, View &, Input::Event e)
 					{
-						onSelectFileD.callCopy(*this, dir[i].data(), e);
+						onSelectFile_.callCopy(*this, dir[i].data(), e);
 					});
 			}
 		}
+	}
+	else
+	{
+		// no entires, show a message instead
+		if(ec)
+			string_printf(msgStr, "Can't open directory:\n%s", ec.message().c_str());
+		else
+			string_copy(msgStr, "Empty Directory");
 	}
 	if(!e.isPointer())
 		tbl.highlightCell(0);
 	else
 		tbl.resetScroll();
-	navV.setTitle(FS::current_path().data());
-	return res;
+	navV.setTitle(currPath.data());
+	onChangePath_.callSafe(*this, prevPath, e);
+	return {};
 }
 
-CallResult FSPicker::setPath(const char *path, bool forcePathChange)
+std::error_code FSPicker::setPath(const char *path, bool forcePathChange)
 {
 	return setPath(path, forcePathChange, Input::defaultEvent());
+}
+
+FS::PathString FSPicker::path() const
+{
+	return currPath;
+}
+
+FS::PathString FSPicker::makePathString(const char *base) const
+{
+	return FS::makePathString(currPath.data(), base);
 }

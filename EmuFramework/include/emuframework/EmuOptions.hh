@@ -16,26 +16,9 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <emuframework/Option.hh>
+#include <emuframework/EmuSystem.hh>
 #include <imagine/bluetooth/BluetoothAdapter.hh>
 #include <imagine/audio/Audio.hh>
-
-#if (defined __ANDROID__ && !defined CONFIG_MACHINE_OUYA) || \
-	defined CONFIG_BASE_IOS || \
-	(defined CONFIG_BASE_X11 && !defined CONFIG_MACHINE_PANDORA)
-#define CONFIG_VCONTROLS_GAMEPAD
-#endif
-
-template<int MAX, class T>
-bool optionIsValidWithMax(T val)
-{
-	return val <= MAX;
-}
-
-template<int MIN, int MAX, class T>
-bool optionIsValidWithMinMax(T val)
-{
-	return val >= MIN && val <= MAX;
-}
 
 extern Byte1Option optionAutoSaveState;
 extern Byte1Option optionConfirmAutoLoadState;
@@ -153,13 +136,13 @@ extern Byte1Option optionFakeUserActivity;
 
 extern Byte1Option optionDitherImage;
 
-#if defined CONFIG_BASE_X11 || (defined CONFIG_BASE_ANDROID && !defined CONFIG_MACHINE_OUYA) || defined CONFIG_BASE_IOS
-#define EMU_FRAMEWORK_WINDOW_PIXEL_FORMAT_OPTION
+#ifdef EMU_FRAMEWORK_WINDOW_PIXEL_FORMAT_OPTION
 extern Byte1Option optionWindowPixelFormat;
 #endif
 
 static const char *optionSavePathDefaultToken = ":DEFAULT:";
 extern PathOption optionSavePath;
+extern PathOption optionLastLoadPath;
 extern Byte1Option optionCheckSavePathWriteAccess;
 
 extern Byte1Option optionShowBundledGames;
@@ -168,4 +151,4 @@ extern Byte1Option optionShowBundledGames;
 extern PathOption optionFirmwarePath;
 
 void initOptions();
-void setupFont();
+void setupFont(Gfx::Renderer &r);

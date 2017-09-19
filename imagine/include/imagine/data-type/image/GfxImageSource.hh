@@ -15,12 +15,15 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
+#include <system_error>
+
 class GfxImageSource
 {
 public:
 	constexpr GfxImageSource() {}
 	virtual ~GfxImageSource() {}
-	virtual CallResult write(IG::Pixmap &dest) = 0;
+	virtual std::errc write(IG::Pixmap dest) = 0;
 	virtual IG::Pixmap lockPixmap() = 0;
 	virtual void unlockPixmap() = 0;
+	virtual explicit operator bool() const = 0;
 };

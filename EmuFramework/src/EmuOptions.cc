@@ -15,10 +15,11 @@
 
 #include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuSystem.hh>
-#include <emuframework/EmuInput.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/VideoImageEffect.hh>
 #include <emuframework/VController.hh>
+#include "private.hh"
+#include "privateInput.hh"
 #ifdef CONFIG_EMUFRAMEWORK_VCONTROLS
 extern SysVController vController;
 #endif
@@ -250,6 +251,7 @@ Byte1Option optionWindowPixelFormat(CFGKEY_WINDOW_PIXEL_FORMAT, IG::PIXEL_NONE, 
 #endif
 
 PathOption optionSavePath(CFGKEY_SAVE_PATH, EmuSystem::savePath_, "");
+PathOption optionLastLoadPath(CFGKEY_LAST_DIR, lastLoadPath, "");
 Byte1Option optionCheckSavePathWriteAccess{CFGKEY_CHECK_SAVE_PATH_WRITE_ACCESS, 1};
 
 Byte1Option optionShowBundledGames(CFGKEY_SHOW_BUNDLED_GAMES, 1);
@@ -258,6 +260,11 @@ Byte1Option optionShowBundledGames(CFGKEY_SHOW_BUNDLED_GAMES, 1);
 
 void initOptions()
 {
+	if(!strlen(lastLoadPath.data()))
+	{
+		lastLoadPath = Base::storagePath();
+	}
+
 	optionSoundRate.initDefault(AudioManager::nativeFormat().rate);
 
 	#ifdef CONFIG_BASE_IOS
@@ -346,6 +353,33 @@ void initOptions()
 		optionFrameRate.initDefault(60);
 	}
 
+	if(!EmuApp::autoSaveStateDefault)
+	{
+		optionAutoSaveState.initDefault(false);
+	}
+
+	if(!EmuApp::hasIcon)
+	{
+		optionNotificationIcon.initDefault(false);
+		optionNotificationIcon.isConst = true;
+	}
+
+	if(EmuSystem::forcedSoundRate)
+	{
+		optionSoundRate.initDefault(EmuSystem::forcedSoundRate);
+		optionSoundRate.isConst = true;
+	}
+
+	if(!EmuSystem::hasSound)
+	{
+		optionSound.initDefault(false);
+	}
+
+	if(EmuSystem::constFrameRate)
+	{
+		optionFrameRate.isConst = true;
+	}
+
 	EmuSystem::initOptions();
 
 	bool defaultToLargeControls = false;
@@ -369,16 +403,16 @@ bool OptionVControllerLayoutPosition::isDefault() const
 bool OptionVControllerLayoutPosition::writeToIO(IO &io)
 {
 	logMsg("writing vcontroller positions");
-	CallResult r = OK;
-	io.writeVal(key, &r);
+	std::error_code ec{};
+	io.writeVal(key, &ec);
 	for(auto &posArr : vControllerLayoutPos)
 	{
 		for(auto &e : posArr)
 		{
-			io.writeVal((uint8)e.origin, &r);
-			io.writeVal((uint8)e.state, &r);
-			io.writeVal((int32)e.pos.x, &r);
-			io.writeVal((int32)e.pos.y, &r);
+			io.writeVal((uint8)e.origin, &ec);
+			io.writeVal((uint8)e.state, &ec);
+			io.writeVal((int32)e.pos.x, &ec);
+			io.writeVal((int32)e.pos.y, &ec);
 		}
 	}
 	return 1;
@@ -454,14 +488,12 @@ void setVControllerUseScaledCoordinates(bool on)
 	#endif
 }
 
-void setupFont()
+void setupFont(Gfx::Renderer &r)
 {
 	float size = optionFontSize / 1000.;
 	logMsg("setting up font size %f", (double)size);
-	View::defaultFace->applySettings(FontSettings(mainWin.win.heightSMMInPixels(size)));
-	// TODO: not used yet
-	//float smallSize = std::max(2000, optionFontSize - 500) / 1000.;
-	//View::defaultSmallFace->applySettings(FontSettings(mainWin.win.heightSMMInPixels(smallSize)));
+	View::defaultFace.setFontSettings(r, IG::FontSettings(mainWin.win.heightSMMInPixels(size)));
+	View::defaultBoldFace.setFontSettings(r, IG::FontSettings(mainWin.win.heightSMMInPixels(size)));
 }
 
 #ifdef __ANDROID__
@@ -477,6 +509,25 @@ Gfx::Texture::AndroidStorageImpl makeAndroidStorageImpl(uint8 val)
 	}
 }
 #endif
+
+bool OptionRecentGames::isDefault() const
+{
+	return recentGameList.size() == 0;
+}
+
+bool OptionRecentGames::writeToIO(IO &io)
+{
+	logMsg("writing recent list");
+	std::error_code ec{};
+	io.writeVal(key, &ec);
+	for(auto &e : recentGameList)
+	{
+		uint len = strlen(e.path.data());
+		io.writeVal((uint16)len, &ec);
+		io.write(e.path.data(), len, &ec);
+	}
+	return true;
+}
 
 bool OptionRecentGames::readFromIO(IO &io, uint readSize_)
 {
@@ -509,9 +560,7 @@ bool OptionRecentGames::readFromIO(IO &io, uint readSize_)
 			continue; // don't add empty paths
 		info.path[bytesRead] = 0;
 		readSize -= len;
-		auto basename = FS::basename(info.path);
-		auto dotpos = string_dotExtension(basename.data());
-		std::copy_n(basename.data(), dotpos ? dotpos - basename.data() : std::strlen(basename.data()), info.name.data());
+		info.name = EmuSystem::fullGameNameForPath(info.path.data());
 		//logMsg("adding game to recent list: %s, name: %s", info.path, info.name);
 		recentGameList.push_back(info);
 	}
@@ -522,4 +571,15 @@ bool OptionRecentGames::readFromIO(IO &io, uint readSize_)
 	}
 
 	return true;
+}
+
+uint OptionRecentGames::ioSize()
+{
+	uint strSizes = 0;
+	for(auto &e : recentGameList)
+	{
+		strSizes += 2;
+		strSizes += strlen(e.path.data());
+	}
+	return sizeof(key) + strSizes;
 }

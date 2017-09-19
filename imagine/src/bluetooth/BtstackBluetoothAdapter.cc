@@ -238,7 +238,7 @@ void BtstackBluetoothAdapter::packetHandler(uint8_t packet_type, uint16_t channe
 			auto sock = BtstackBluetoothSocket::findSocket(channel);
 			if(!sock)
 			{
-				bug_exit("can't find socket");
+				logErr("can't find socket");
 				return;
 			}
 			sock->onData()((char*)packet, size);
@@ -320,7 +320,7 @@ void BtstackBluetoothAdapter::packetHandler(uint8_t packet_type, uint16_t channe
 						auto sock = BtstackBluetoothSocket::findSocket(addr, activeCmd.createChannelData.channel);
 						if(!sock)
 						{
-							bug_exit("can't find socket");
+							logErr("can't find socket");
 							break;
 						}
 						sock->handle = handle;
@@ -337,7 +337,7 @@ void BtstackBluetoothAdapter::packetHandler(uint8_t packet_type, uint16_t channe
 						auto sock = BtstackBluetoothSocket::findSocket(btAddr, activeCmd.createChannelData.channel);
 						if(!sock)
 						{
-							bug_exit("can't find socket");
+							logErr("can't find socket");
 							break;
 						}
 						if(sock->handle != handle)
@@ -606,7 +606,7 @@ void BtstackBluetoothAdapter::packetHandler(uint8_t packet_type, uint16_t channe
 					cmdActive = 0;
 					uint8 status = packet[2];
 					uint psm = READ_BT_16(packet, 3);
-					auto onResult = moveAndClear(setL2capServiceOnResult);
+					auto onResult = IG::moveAndClear(setL2capServiceOnResult);
 					if(status && status != L2CAP_SERVICE_ALREADY_REGISTERED)
 					{
 						logErr("error %d registering psm %d", status, psm);
@@ -659,7 +659,7 @@ void BtstackBluetoothAdapter::setL2capService(uint psm, bool on, OnStatusDelegat
 				{
 					if(newState != STATE_ON)
 					{
-						auto onResult = moveAndClear(setL2capServiceOnResult);
+						auto onResult = IG::moveAndClear(setL2capServiceOnResult);
 						onResult(*this, 0, 0);
 						return;
 					}
@@ -700,7 +700,7 @@ void BtstackBluetoothAdapter::setActiveState(bool on, OnStateChangeDelegate onSt
 {
 	if(onStateChangeD)
 	{
-		bug_exit("state change already in progress");
+		logErr("state change already in progress");
 		return;
 	}
 	if(on)
@@ -720,7 +720,7 @@ void BtstackBluetoothAdapter::setActiveState(bool on, OnStateChangeDelegate onSt
 	else
 	{
 		// TODO
-		bug_exit("TODO");
+		bug_unreachable("TODO");
 		onStateChange(*this, STATE_ERROR);
 	}
 }
@@ -985,7 +985,7 @@ void BtstackBluetoothSocket::handleRfcommChannelOpened(uint8_t packet_type, uint
 	auto sock = findSocket(addr, ch);
 	if(!sock)
 	{
-		bug_exit("can't find socket");
+		logErr("can't find socket");
 		return;
 	}
 	if(packet[2] == 0)
@@ -1018,7 +1018,7 @@ void BtstackBluetoothSocket::handleL2capChannelOpened(uint8_t packet_type, uint1
 	auto sock = findSocket(addr, psm);
 	if(!sock)
 	{
-		bug_exit("can't find socket");
+		logErr("can't find socket");
 		return;
 	}
 	if(packet[2] == 0)

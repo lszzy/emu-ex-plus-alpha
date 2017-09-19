@@ -1,10 +1,10 @@
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
 #include "internal.hh"
 
 static constexpr uint MAX_SH2_CORES = 4;
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomSystemOptionView : public SystemOptionView
 {
 	char biosPathStr[256]{};
 
@@ -18,10 +18,10 @@ class EmuSystemOptionView : public SystemOptionView
 				{
 					logMsg("set bios %s", ::biosPath.data());
 					printBiosMenuEntryStr(biosPathStr);
-					biosPath.compile(projP);
+					biosPath.compile(renderer(), projP);
 				},
-				hasBIOSExtension, window()};
-			viewStack.pushAndShow(biosSelectMenu, e);
+				hasBIOSExtension, attachParams()};
+			pushAndShow(biosSelectMenu, e);
 		}
 	};
 
@@ -49,7 +49,7 @@ class EmuSystemOptionView : public SystemOptionView
 	};
 
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		if(SH2Cores > 1)
@@ -71,15 +71,11 @@ public:
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new MenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new VideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
 		default: return nullptr;
 	}
 }

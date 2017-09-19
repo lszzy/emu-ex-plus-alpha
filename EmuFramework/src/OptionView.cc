@@ -15,9 +15,11 @@
 
 #include <emuframework/OptionView.hh>
 #include <emuframework/EmuApp.hh>
+#include <emuframework/EmuOptions.hh>
 #include <emuframework/FilePicker.hh>
 #include <imagine/gui/TextEntry.hh>
 #include <algorithm>
+#include "private.hh"
 
 using namespace IG;
 
@@ -47,11 +49,11 @@ static FS::PathString savePathStrToDescStr(char *savePathStr)
 }
 
 BiosSelectMenu::BiosSelectMenu(const char *name, FS::PathString *biosPathStr_, BiosChangeDelegate onBiosChange_,
-	EmuSystem::NameFilterFunc fsFilter_, Base::Window &win):
+	EmuSystem::NameFilterFunc fsFilter_, ViewAttachParams attach):
 	TableView
 	{
 		name,
-		win,
+		attach,
 		[this](const TableView &)
 		{
 			return 2;
@@ -70,20 +72,15 @@ BiosSelectMenu::BiosSelectMenu(const char *name, FS::PathString *biosPathStr_, B
 		"Select File",
 		[this](TextMenuItem &, View &, Input::Event e)
 		{
-			workDirStack.push();
-			chdirFromFilePath(biosPathStr->data());
-			auto &fPicker = *new EmuFilePicker{window(), false, fsFilter};
+			auto startPath = strlen(biosPathStr->data()) ? FS::dirname(*biosPathStr) : lastLoadPath;
+			auto &fPicker = *new EmuFilePicker{attachParams(), startPath.data(), false, fsFilter};
 			fPicker.setOnSelectFile(
 				[this](FSPicker &picker, const char* name, Input::Event e)
 				{
-					onSelectFile(name, e);
+					*biosPathStr = picker.makePathString(name);
 					picker.dismiss();
-				});
-			fPicker.setOnClose(
-				[](FSPicker &picker, Input::Event e)
-				{
-					picker.dismiss();
-					workDirStack.pop();
+					onBiosChangeD.callSafe();
+					popAndShow();
 				});
 			modalViewController.pushAndShow(fPicker, e);
 		}
@@ -106,15 +103,6 @@ BiosSelectMenu::BiosSelectMenu(const char *name, FS::PathString *biosPathStr_, B
 	assert(biosPathStr);
 }
 
-void BiosSelectMenu::onSelectFile(const char* name, Input::Event e)
-{
-	logMsg("size %d", (int)sizeof(*biosPathStr));
-	string_printf(*biosPathStr, "%s/%s", FS::current_path().data(), name);
-	if(onBiosChangeD) onBiosChangeD();
-	workDirStack.pop();
-	viewStack.popAndShow();
-}
-
 static void setAutoSaveState(uint val)
 {
 	optionAutoSaveState = val;
@@ -124,23 +112,21 @@ static void setAutoSaveState(uint val)
 #ifdef __ANDROID__
 static bool setAndroidTextureStorage(uint8 mode)
 {
-	using namespace Gfx;
 	static auto resetVideo =
 		[]()
 		{
-			if(emuVideo.vidImg)
+			if(emuVideo.image())
 			{
 				// texture may switch to external format so
 				// force effect shaders to re-compile
 				emuVideoLayer.setEffect(0);
-				emuVideo.reinitImage();
-				emuVideo.clearImage();
+				emuVideo.resetImage();
 				#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
 				emuVideoLayer.setEffect(optionImgEffect);
 				#endif
 			}
 		};
-	if(!Gfx::Texture::setAndroidStorageImpl(makeAndroidStorageImpl(mode)))
+	if(!Gfx::Texture::setAndroidStorageImpl(emuVideo.renderer(), makeAndroidStorageImpl(mode)))
 	{
 		return false;
 	}
@@ -167,7 +153,7 @@ static void setAudioRate(uint rate)
 static void setMenuOrientation(uint val)
 {
 	optionMenuOrientation = val;
-	Gfx::setWindowValidOrientations(mainWin.win, optionMenuOrientation);
+	emuVideo.renderer().setWindowValidOrientations(mainWin.win, optionMenuOrientation);
 	logMsg("set menu orientation: %s", Base::orientationToStr(int(optionMenuOrientation)));
 }
 
@@ -206,7 +192,7 @@ static void setViewportZoom(int val)
 static void setImgEffect(uint val)
 {
 	optionImgEffect = val;
-	if(emuVideo.vidImg)
+	if(emuVideo.image())
 	{
 		emuVideoLayer.setEffect(val);
 		emuWin->win.postDraw();
@@ -217,7 +203,7 @@ static void setImgEffect(uint val)
 static void setOverlayEffect(uint val)
 {
 	optionOverlayEffect = val;
-	emuVideoLayer.vidImgOverlay.setEffect(val);
+	emuVideoLayer.setOverlay(val);
 	emuVideoLayer.placeOverlay();
 	emuWin->win.postDraw();
 }
@@ -225,7 +211,7 @@ static void setOverlayEffect(uint val)
 static void setOverlayEffectLevel(uint val)
 {
 	optionOverlayEffectLevel = val;
-	emuVideoLayer.vidImgOverlay.intensity = val/100.;
+	emuVideoLayer.setOverlayIntensity(val/100.);
 	emuWin->win.postDraw();
 }
 
@@ -235,7 +221,7 @@ static void setImgEffectPixelFormat(PixelFormatID format)
 	if(format == PIXEL_NONE)
 		popup.printf(3, false, "Set RGB565 mode via Auto");
 	optionImageEffectPixelFormat = format;
-	emuVideoLayer.vidImgEffect.setBitDepth(format == PIXEL_RGBA8888 ? 32 : 16);
+	emuVideoLayer.setEffectBitDepth(format == PIXEL_RGBA8888 ? 32 : 16);
 	emuWin->win.postDraw();
 }
 #endif
@@ -259,68 +245,15 @@ static void setWindowPixelFormat(PixelFormatID format)
 static void setFontSize(uint val)
 {
 	optionFontSize = val;
-	setupFont();
+	setupFont(emuVideo.renderer());
 	placeElements();
 }
 
 template <size_t S>
-static void printPathMenuEntryStr(char (&str)[S])
+static void printPathMenuEntryStr(PathOption optionSavePath, char (&str)[S])
 {
 	string_printf(str, "Save Path: %s", savePathStrToDescStr(optionSavePath).data());
 }
-
-static class SavePathSelectMenu
-{
-public:
-	PathChangeDelegate onPathChange;
-
-	constexpr SavePathSelectMenu() {}
-
-	void onClose(Input::Event e)
-	{
-		snprintf(optionSavePath, sizeof(FS::PathString), "%s", FS::current_path().data());
-		logMsg("set save path %s", (char*)optionSavePath);
-		if(onPathChange) onPathChange(optionSavePath);
-		workDirStack.pop();
-	}
-
-	void init(Input::Event e)
-	{
-		auto &multiChoiceView = *new TextTableView{"Save Path", mainWin.win, 3};
-		multiChoiceView.appendItem("Set Custom Path",
-			[this](TextMenuItem &, View &, Input::Event e)
-			{
-				workDirStack.push();
-				FS::current_path(optionSavePath);
-				auto &fPicker = *new EmuFilePicker{mainWin.win, true, {}};
-				fPicker.setOnClose(
-					[this](FSPicker &picker, Input::Event e)
-					{
-						onClose(e);
-						picker.dismiss();
-						viewStack.popAndShow();
-					});
-				modalViewController.pushAndShow(fPicker, e);
-			});
-		multiChoiceView.appendItem("Same as Game",
-			[this]()
-			{
-				auto onPathChange = this->onPathChange;
-				viewStack.popAndShow();
-				strcpy(optionSavePath, "");
-				if(onPathChange) onPathChange("");
-			});
-		multiChoiceView.appendItem("Default",
-			[this]()
-			{
-				auto onPathChange = this->onPathChange;
-				viewStack.popAndShow();
-				strcpy(optionSavePath, optionSavePathDefaultToken);
-				if(onPathChange) onPathChange(optionSavePathDefaultToken);
-			});
-		viewStack.pushAndShow(multiChoiceView, e);
-	}
-} pathSelectMenu;
 
 class DetectFrameRateView : public View
 {
@@ -337,21 +270,21 @@ public:
 	uint callbacks = 0;
 	std::array<char, 32> fpsStr{};
 
-	DetectFrameRateView(Base::Window &win): View(win),
-		fpsText{nullptr, View::defaultFace}
+	DetectFrameRateView(ViewAttachParams attach): View(attach),
+		fpsText{nullptr, &View::defaultFace}
 	{
-		View::defaultFace->precacheAlphaNum();
-		View::defaultFace->precache(".");
+		View::defaultFace.precacheAlphaNum(attach.renderer);
+		View::defaultFace.precache(attach.renderer, ".");
 		fpsText.setString("Preparing to detect frame rate...");
 	}
 
-	~DetectFrameRateView() override
+	~DetectFrameRateView() final
 	{
 		setCPUNeedsLowLatency(false);
 		emuWin->win.screen()->removeOnFrame(detectFrameRate);
 	}
 
-	IG::WindowRect &viewRect() override { return viewFrame; }
+	IG::WindowRect &viewRect() final { return viewFrame; }
 
 	double totalFrameTimeSecs() const
 	{
@@ -363,30 +296,33 @@ public:
 		return totalFrameTimeSecs() / (double)totalFrames;
 	}
 
-	void place() override
+	void place() final
 	{
-		fpsText.compile(projP);
+		fpsText.compile(renderer(), projP);
 	}
 
-	void inputEvent(Input::Event e) override
+	bool inputEvent(Input::Event e) final
 	{
 		if(e.pushed() && e.isDefaultCancelButton())
 		{
 			logMsg("aborted detection");
 			popAndShow();
+			return true;
 		}
+		return false;
 	}
 
-	void draw() override
+	void draw() final
 	{
 		using namespace Gfx;
-		setColor(1., 1., 1., 1.);
-		texAlphaProgram.use(projP.makeTranslate());
-		fpsText.draw(projP.alignXToPixel(projP.bounds().xCenter()),
+		auto &r = renderer();
+		r.setColor(1., 1., 1., 1.);
+		r.texAlphaProgram.use(r, projP.makeTranslate());
+		fpsText.draw(r, projP.alignXToPixel(projP.bounds().xCenter()),
 			projP.alignYToPixel(projP.bounds().yCenter()), C2DO, projP);
 	}
 
-	void onAddedToController(Input::Event e) override
+	void onAddedToController(Input::Event e) final
 	{
 		setCPUNeedsLowLatency(true);
 		detectFrameRate =
@@ -427,7 +363,7 @@ public:
 								{
 									string_printf(fpsStr, "%.2ffps", 1. / averageFrameTimeSecs());
 									fpsText.setString(fpsStr.data());
-									fpsText.compile(projP);
+									fpsText.compile(renderer(), projP);
 								}
 							}
 							if(totalFrames >= framesToTime)
@@ -452,139 +388,6 @@ public:
 		emuWin->win.screen()->addOnFrame(detectFrameRate);
 	}
 };
-
-static class FrameRateSelectMenu
-{
-public:
-	using FrameRateChangeDelegate = DelegateFunc<void (double frameRate)>;
-	FrameRateChangeDelegate onFrameTimeChange;
-
-	constexpr FrameRateSelectMenu() {}
-
-	void init(EmuSystem::VideoSystem vidSys, Input::Event e)
-	{
-		const bool includeFrameRateDetection = !Config::envIsIOS;
-		auto &multiChoiceView = *new TextTableView{"Frame Rate", mainWin.win, includeFrameRateDetection ? 4 : 3};
-		multiChoiceView.appendItem("Set with screen's reported rate",
-			[this](TextMenuItem &, View &view, Input::Event e)
-			{
-				if(!emuWin->win.screen()->frameRateIsReliable())
-				{
-					#ifdef __ANDROID__
-					if(Base::androidSDK() <= 10)
-					{
-						popup.postError("Many Android 2.3 devices mis-report their refresh rate, "
-							"using the detected or default rate may give better results");
-					}
-					else
-					#endif
-					{
-						popup.postError("Reported rate potentially unreliable, "
-							"using the detected or default rate may give better results");
-					}
-				}
-				onFrameTimeChange.callSafe(0);
-				view.popAndShow();
-			});
-		multiChoiceView.appendItem("Set default rate",
-			[this, vidSys](TextMenuItem &, View &view, Input::Event e)
-			{
-				onFrameTimeChange.callSafe(EmuSystem::defaultFrameTime(vidSys));
-				view.popAndShow();
-			});
-		multiChoiceView.appendItem("Set custom rate",
-			[this](TextMenuItem &, View &view, Input::Event e)
-			{
-				auto &textInputView = *new CollectTextInputView{view.window()};
-				textInputView.init("Input decimal or fraction", "", getCollectTextCloseAsset());
-				textInputView.onText() =
-					[this](CollectTextInputView &view, const char *str)
-					{
-						if(str)
-						{
-							double numer, denom;
-							int items = sscanf(str, "%lf /%lf", &numer, &denom);
-							if(items == 1 && numer > 0)
-							{
-								onFrameTimeChange.callSafe(1. / numer);
-							}
-							else if(items > 1 && (numer > 0 && denom > 0))
-							{
-								onFrameTimeChange.callSafe(denom / numer);
-							}
-							else
-							{
-								popup.postError("Invalid input");
-								return 1;
-							}
-						}
-						view.dismiss();
-						return 0;
-					};
-				view.popAndShow();
-				modalViewController.pushAndShow(textInputView, e);
-			});
-		if(includeFrameRateDetection)
-		{
-			multiChoiceView.appendItem("Detect screen's rate and set",
-				[this](TextMenuItem &, View &view, Input::Event e)
-				{
-					auto &frView = *new DetectFrameRateView{view.window()};
-					frView.onDetectFrameTime =
-						[this](double frameTime)
-						{
-							if(frameTime)
-							{
-								onFrameTimeChange.callSafe(frameTime);
-							}
-							else
-							{
-								popup.postError("Detected rate too unstable to use");
-							}
-						};
-					view.popAndShow();
-					modalViewController.pushAndShow(frView, e);
-				});
-		}
-		viewStack.pushAndShow(multiChoiceView, e);
-	}
-} frameRateSelectMenu;
-
-void FirmwarePathSelector::onClose(Input::Event e)
-{
-	snprintf(optionFirmwarePath, sizeof(FS::PathString), "%s", FS::current_path().data());
-	logMsg("set firmware path %s", (char*)optionFirmwarePath);
-	if(onPathChange) onPathChange(optionFirmwarePath);
-	workDirStack.pop();
-}
-
-void FirmwarePathSelector::init(const char *name, Input::Event e)
-{
-	auto &multiChoiceView = *new TextTableView{name, mainWin.win, 2};
-	multiChoiceView.appendItem("Set Custom Path",
-		[this](TextMenuItem &, View &, Input::Event e)
-		{
-			viewStack.popAndShow();
-			workDirStack.push();
-			FS::current_path(optionFirmwarePath);
-			auto &fPicker = *new EmuFilePicker{mainWin.win, true, {}};
-			fPicker.setOnClose(
-				[this](FSPicker &picker, Input::Event e)
-				{
-					onClose(e);
-					picker.dismiss();
-				});
-			modalViewController.pushAndShow(fPicker, e);
-		});
-	multiChoiceView.appendItem("Default",
-		[this]()
-		{
-			viewStack.popAndShow();
-			strcpy(optionFirmwarePath, "");
-			if(onPathChange) onPathChange("");
-		});
-	viewStack.pushAndShow(multiChoiceView, e);
-}
 
 template <size_t S>
 static void printFrameRateStr(char (&str)[S])
@@ -672,7 +475,7 @@ void SystemOptionView::loadStockItems()
 	item.emplace_back(&autoSaveState);
 	item.emplace_back(&confirmAutoLoadState);
 	item.emplace_back(&confirmOverwriteState);
-	printPathMenuEntryStr(savePathStr);
+	printPathMenuEntryStr(optionSavePath, savePathStr);
 	item.emplace_back(&savePath);
 	item.emplace_back(&checkSavePathWriteAccess);
 	item.emplace_back(&fastForwardSpeed);
@@ -737,8 +540,8 @@ void GUIOptionView::loadStockItems()
 	}
 }
 
-VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
-	TableView{"Video Options", win, item},
+VideoOptionView::VideoOptionView(ViewAttachParams attach, bool customMenu):
+	TableView{"Video Options", attach, item},
 	#ifdef __ANDROID__
 	androidTextureStorageItem
 	{
@@ -747,7 +550,7 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 			[this]()
 			{
 				setAndroidTextureStorage(OPTION_ANDROID_TEXTURE_STORAGE_AUTO);
-				popup.printf(3, false, "Set %s mode via Auto", Gfx::Texture::androidStorageImplStr());
+				popup.printf(3, false, "Set %s mode via Auto", Gfx::Texture::androidStorageImplStr(renderer()));
 			}
 		},
 		{
@@ -773,7 +576,7 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 					};
 				if(!Gfx::Texture::isAndroidGraphicBufferStorageWhitelisted())
 				{
-					auto &ynAlertView = *new YesNoAlertView{view.window(),
+					auto &ynAlertView = *new YesNoAlertView{view.attachParams(),
 						"Setting Graphic Buffer improves performance but may hang or crash "
 						"the app depending on your device or GPU",
 						"OK", "Cancel"};
@@ -856,25 +659,7 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 		frameRateStr,
 		[this](TextMenuItem &, View &, Input::Event e)
 		{
-			frameRateSelectMenu.init(EmuSystem::VIDSYS_NATIVE_NTSC, e);
-			frameRateSelectMenu.onFrameTimeChange =
-				[this](double time)
-				{
-					double wantedTime = time;
-					if(!time)
-					{
-						wantedTime = emuWin->win.screen()->frameTime();
-					}
-					if(!EmuSystem::setFrameTime(EmuSystem::VIDSYS_NATIVE_NTSC, wantedTime))
-					{
-						popup.printf(4, true, "%.2fHz not in valid range", 1. / wantedTime);
-						return;
-					}
-					EmuSystem::configFrameTime();
-					optionFrameRate = time;
-					printFrameRateStr(frameRateStr);
-					frameRate.compile(projP);
-				};
+			pushAndShowFrameRateSelectMenu(EmuSystem::VIDSYS_NATIVE_NTSC, e);
 			postDraw();
 		}
 	},
@@ -883,25 +668,7 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 		frameRatePALStr,
 		[this](TextMenuItem &, View &, Input::Event e)
 		{
-			frameRateSelectMenu.init(EmuSystem::VIDSYS_PAL, e);
-			frameRateSelectMenu.onFrameTimeChange =
-				[this](double time)
-				{
-					double wantedTime = time;
-					if(!time)
-					{
-						wantedTime = emuWin->win.screen()->frameTime();
-					}
-					if(!EmuSystem::setFrameTime(EmuSystem::VIDSYS_PAL, wantedTime))
-					{
-						popup.printf(4, true, "%.2fHz not in valid range", 1. / wantedTime);
-						return;
-					}
-					EmuSystem::configFrameTime();
-					optionFrameRatePAL = time;
-					printFrameRatePALStr(frameRatePALStr);
-					frameRatePAL.compile(projP);
-				};
+			pushAndShowFrameRateSelectMenu(EmuSystem::VIDSYS_PAL, e);
 			postDraw();
 		}
 	},
@@ -1138,7 +905,7 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			optionDitherImage = item.flipBoolValue(*this);
-			Gfx::setDither(optionDitherImage);
+			renderer().setDither(optionDitherImage);
 		}
 	}
 {
@@ -1163,8 +930,119 @@ VideoOptionView::VideoOptionView(Base::Window &win, bool customMenu):
 	}
 }
 
-AudioOptionView::AudioOptionView(Base::Window &win, bool customMenu):
-	TableView{"Audio Options", win, item},
+void VideoOptionView::onFrameTimeChange(EmuSystem::VideoSystem vidSys, double time)
+{
+	double wantedTime = time;
+	if(!time)
+	{
+		wantedTime = emuWin->win.screen()->frameTime();
+	}
+	if(!EmuSystem::setFrameTime(vidSys, wantedTime))
+	{
+		popup.printf(4, true, "%.2fHz not in valid range", 1. / wantedTime);
+		return;
+	}
+	EmuSystem::configFrameTime();
+	if(vidSys == EmuSystem::VIDSYS_NATIVE_NTSC)
+	{
+		optionFrameRate = time;
+		printFrameRateStr(frameRateStr);
+		frameRate.compile(renderer(), projP);
+	}
+	else
+	{
+		optionFrameRatePAL = time;
+		printFrameRatePALStr(frameRatePALStr);
+		frameRatePAL.compile(renderer(), projP);
+	}
+}
+
+void VideoOptionView::pushAndShowFrameRateSelectMenu(EmuSystem::VideoSystem vidSys, Input::Event e)
+{
+	const bool includeFrameRateDetection = !Config::envIsIOS;
+	auto &multiChoiceView = *new TextTableView{"Frame Rate", attachParams(), includeFrameRateDetection ? 4 : 3};
+	multiChoiceView.appendItem("Set with screen's reported rate",
+		[this, vidSys](TextMenuItem &, View &, Input::Event e)
+		{
+			if(!emuWin->win.screen()->frameRateIsReliable())
+			{
+				#ifdef __ANDROID__
+				if(Base::androidSDK() <= 10)
+				{
+					popup.postError("Many Android 2.3 devices mis-report their refresh rate, "
+						"using the detected or default rate may give better results");
+				}
+				else
+				#endif
+				{
+					popup.postError("Reported rate potentially unreliable, "
+						"using the detected or default rate may give better results");
+				}
+			}
+			onFrameTimeChange(vidSys, 0);
+		});
+	multiChoiceView.appendItem("Set default rate",
+		[this, vidSys](TextMenuItem &, View &, Input::Event e)
+		{
+			onFrameTimeChange(vidSys, EmuSystem::defaultFrameTime(vidSys));
+			popAndShow();
+		});
+	multiChoiceView.appendItem("Set custom rate",
+		[this, vidSys](TextMenuItem &, View &, Input::Event e)
+		{
+			popAndShow();
+			EmuApp::pushAndShowNewCollectTextInputView(attachParams(), e, "Input decimal or fraction", "",
+				[this, vidSys](CollectTextInputView &view, const char *str)
+				{
+					if(str)
+					{
+						double numer, denom;
+						int items = sscanf(str, "%lf /%lf", &numer, &denom);
+						if(items == 1 && numer > 0)
+						{
+							onFrameTimeChange(vidSys, 1. / numer);
+						}
+						else if(items > 1 && (numer > 0 && denom > 0))
+						{
+							onFrameTimeChange(vidSys, denom / numer);
+						}
+						else
+						{
+							popup.postError("Invalid input");
+							return 1;
+						}
+					}
+					view.dismiss();
+					return 0;
+				});
+		});
+	if(includeFrameRateDetection)
+	{
+		multiChoiceView.appendItem("Detect screen's rate and set",
+			[this, vidSys](TextMenuItem &, View &, Input::Event e)
+			{
+				auto &frView = *new DetectFrameRateView{attachParams()};
+				frView.onDetectFrameTime =
+					[this, vidSys](double frameTime)
+					{
+						if(frameTime)
+						{
+							onFrameTimeChange(vidSys, frameTime);
+						}
+						else
+						{
+							popup.postError("Detected rate too unstable to use");
+						}
+					};
+				popAndShow();
+				modalViewController.pushAndShow(frView, e);
+			});
+	}
+	pushAndShow(multiChoiceView, e);
+}
+
+AudioOptionView::AudioOptionView(ViewAttachParams attach, bool customMenu):
+	TableView{"Audio Options", attach, item},
 	snd
 	{
 		"Sound",
@@ -1253,7 +1131,7 @@ AudioOptionView::AudioOptionView(Base::Window &win, bool customMenu):
 		!optionAudioSoloMix,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
-			optionAudioSoloMix = item.flipBoolValue(*this);
+			optionAudioSoloMix = !item.flipBoolValue(*this);
 		}
 	}
 	#endif
@@ -1264,8 +1142,8 @@ AudioOptionView::AudioOptionView(Base::Window &win, bool customMenu):
 	}
 }
 
-SystemOptionView::SystemOptionView(Base::Window &win, bool customMenu):
-	TableView{"System Options", win, item},
+SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
+	TableView{"System Options", attach, item},
 	autoSaveStateItem
 	{
 		{"Off", [this]() { setAutoSaveState(0); }},
@@ -1309,22 +1187,40 @@ SystemOptionView::SystemOptionView(Base::Window &win, bool customMenu):
 	savePath
 	{
 		savePathStr,
-		[this](TextMenuItem &, View &, Input::Event e)
+		[this](TextMenuItem &, View &view, Input::Event e)
 		{
-			pathSelectMenu.init(e);
-			pathSelectMenu.onPathChange =
-				[this](const char *newPath)
+			auto &multiChoiceView = *new TextTableView{"Save Path", attachParams(), 3};
+			multiChoiceView.appendItem("Set Custom Path",
+				[this](TextMenuItem &, View &, Input::Event e)
 				{
-					if(string_equal(newPath, optionSavePathDefaultToken))
-					{
-						auto path = EmuSystem::baseDefaultGameSavePath();
-						popup.printf(4, false, "Default Save Path:\n%s", path.data());
-					}
-					printPathMenuEntryStr(savePathStr);
-					savePath.compile(projP);
-					EmuSystem::setupGameSavePath();
-					EmuSystem::savePathChanged();
-				};
+					auto startPath = strlen(optionSavePath) ? optionSavePath : optionLastLoadPath;
+					auto &fPicker = *new EmuFilePicker{attachParams(), startPath, true, {}};
+					fPicker.setOnClose(
+						[this](FSPicker &picker, Input::Event e)
+						{
+							EmuSystem::savePath_ = picker.path();
+							logMsg("set save path %s", (char*)optionSavePath);
+							onSavePathChange(optionSavePath);
+							picker.dismiss();
+							popAndShow();
+						});
+					modalViewController.pushAndShow(fPicker, e);
+				});
+			multiChoiceView.appendItem("Same as Game",
+				[this]()
+				{
+					popAndShow();
+					strcpy(optionSavePath, "");
+					onSavePathChange("");
+				});
+			multiChoiceView.appendItem("Default",
+				[this]()
+				{
+					popAndShow();
+					strcpy(optionSavePath, optionSavePathDefaultToken);
+					onSavePathChange(optionSavePathDefaultToken);
+				});
+			pushAndShow(multiChoiceView, e);
 			postDraw();
 		}
 	},
@@ -1423,8 +1319,53 @@ SystemOptionView::SystemOptionView(Base::Window &win, bool customMenu):
 	}
 }
 
-GUIOptionView::GUIOptionView(Base::Window &win, bool customMenu):
-	TableView{"GUI Options", win, item},
+void SystemOptionView::onSavePathChange(const char *path)
+{
+	if(string_equal(path, optionSavePathDefaultToken))
+	{
+		auto defaultPath = EmuSystem::baseDefaultGameSavePath();
+		popup.printf(4, false, "Default Save Path:\n%s", defaultPath.data());
+	}
+	printPathMenuEntryStr(optionSavePath, savePathStr);
+	savePath.compile(renderer(), projP);
+	EmuSystem::setupGameSavePath();
+	EmuSystem::savePathChanged();
+}
+
+void SystemOptionView::onFirmwarePathChange(const char *path, Input::Event e) {}
+
+void SystemOptionView::pushAndShowFirmwarePathMenu(const char *name, Input::Event e)
+{
+	auto &multiChoiceView = *new TextTableView{name, attachParams(), 2};
+	multiChoiceView.appendItem("Set Custom Path",
+		[this](TextMenuItem &, View &, Input::Event e)
+		{
+			auto startPath =  EmuApp::firmwareSearchPath();
+			auto &fPicker = *new EmuFilePicker{attachParams(), startPath.data(), true, {}};
+			fPicker.setOnClose(
+				[this](FSPicker &picker, Input::Event e)
+				{
+					auto path = picker.path();
+					EmuApp::setFirmwareSearchPath(path.data());
+					logMsg("set firmware path %s", path.data());
+					onFirmwarePathChange(path.data(), e);
+					picker.dismiss();
+				});
+			popAndShow();
+			EmuApp::pushAndShowModalView(fPicker, e);
+		});
+	multiChoiceView.appendItem("Default",
+		[this](TextMenuItem &, View &, Input::Event e)
+		{
+			popAndShow();
+			EmuApp::setFirmwareSearchPath("");
+			onFirmwarePathChange("", e);
+		});
+	pushAndShow(multiChoiceView, e);
+}
+
+GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
+	TableView{"GUI Options", attach, item},
 	pauseUnfocused
 	{
 		Config::envIsPS3 ? "Pause in XMB" : "Pause if unfocused",
@@ -1609,7 +1550,7 @@ GUIOptionView::GUIOptionView(Base::Window &win, bool customMenu):
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			optionTitleBar = item.flipBoolValue(*this);
-			viewStack.setNavView(optionTitleBar ? &viewNav : 0);
+			viewStack.showNavView(optionTitleBar);
 			placeElements();
 		}
 	},
@@ -1620,7 +1561,7 @@ GUIOptionView::GUIOptionView(Base::Window &win, bool customMenu):
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			View::setNeedsBackControl(item.flipBoolValue(*this));
-			viewNav.setBackImage(View::needsBackControl ? &getAsset(ASSET_ARROW) : nullptr);
+			viewStack.setShowNavViewBackButton(View::needsBackControl);
 			placeElements();
 		}
 	},

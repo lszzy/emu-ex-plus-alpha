@@ -34,6 +34,9 @@ using namespace IG;
 // App exit
 void exit(int returnVal);
 static void exit() { exit(0); }
+[[gnu::format(printf, 2, 3)]]
+void exitWithErrorMessagePrintf(int exitVal, const char *format, ...);
+void exitWithErrorMessageVPrintf(int exitVal, const char *format, va_list args);
 [[noreturn]] void abort();
 
 // Inter-process messages
@@ -87,7 +90,8 @@ void endIdleByUserActivity();
 // Permissions
 enum Permission
 {
-	WRITE_EXT_STORAGE
+	WRITE_EXT_STORAGE,
+	COARSE_LOCATION
 };
 
 bool usesPermission(Permission p);
@@ -130,7 +134,7 @@ void setOnDeviceOrientationChanged(DeviceOrientationChangedDelegate del);
 void setOnSystemOrientationChanged(SystemOrientationChangedDelegate del);
 
 // Called on app startup
-[[gnu::cold]] CallResult onInit(int argc, char** argv);
+[[gnu::cold]] void onInit(int argc, char** argv);
 
 } // Base
 

@@ -74,9 +74,9 @@ void BasicViewController::place()
 	view->place();
 }
 
-void BasicViewController::inputEvent(Input::Event e)
+bool BasicViewController::inputEvent(Input::Event e)
 {
-	view->inputEvent(e);
+	return view->inputEvent(e);
 }
 
 void BasicViewController::draw()
@@ -84,21 +84,18 @@ void BasicViewController::draw()
 	view->draw();
 }
 
-void BasicViewController::init(const Base::Window &win) {}
-
-void ViewStack::setNavView(NavView *nav)
+void ViewStack::setNavView(std::unique_ptr<NavView> nav)
 {
-	this->nav = nav;
+	this->nav = std::move(nav);
 	if(nav)
 	{
-		nav->setLeftBtnActive(size > 1);
-		useNavView = 1;
+		showNavLeftBtn();
 	}
 }
 
 NavView *ViewStack::navView() const
 {
-	return nav;
+	return nav.get();
 }
 
 void ViewStack::place(const IG::WindowRect &rect, const Gfx::ProjectionPlane &projP)
@@ -110,54 +107,52 @@ void ViewStack::place(const IG::WindowRect &rect, const Gfx::ProjectionPlane &pr
 
 void ViewStack::place()
 {
-	if(!size)
+	if(!view.size())
 		return;
 	assert(viewRect.xSize() && viewRect.ySize());
 	customViewRect = viewRect;
-	if(useNavView && nav)
+	if(navViewIsActive())
 	{
 		nav->setTitle(top().name());
-		nav->viewRect.setPosRel({viewRect.x, viewRect.y}, {viewRect.xSize(), IG::makeEvenRoundedUp(int(nav->text.face->nominalHeight()*(double)1.75))}, LT2DO);
-		nav->place(projP);
-		customViewRect.y += nav->viewRect.ySize();
+		nav->viewRect().setPosRel({viewRect.x, viewRect.y}, {viewRect.xSize(), IG::makeEvenRoundedUp(int(nav->titleFace()->nominalHeight()*(double)1.75))}, LT2DO);
+		nav->place(top().renderer(), projP);
+		customViewRect.y += nav->viewRect().ySize();
 	}
 	top().setViewRect(customViewRect, projP);
 	top().place();
 }
 
-void ViewStack::inputEvent(Input::Event e)
+bool ViewStack::inputEvent(Input::Event e)
 {
-	if(useNavView && nav && e.isPointer() && nav->viewRect.overlaps({e.x, e.y}))
+	if(navViewIsActive() && e.isPointer() && nav->viewRect().overlaps(e.pos()))
 	{
-		nav->inputEvent(e);
+		return nav->inputEvent(e);
 	}
-	top().inputEvent(e);
+	return top().inputEvent(e);
 }
 
 void ViewStack::draw()
 {
 	top().draw();
-	if(useNavView && nav) nav->draw(top().window(), projP);
+	if(navViewIsActive())
+		nav->draw(top().renderer(), top().window(), projP);
 }
 
 void ViewStack::push(View &v, Input::Event e)
 {
-	assert(size != IG::size(view));
 	v.setController(this, e);
-	view[size] = &v;
-	size++;
-	logMsg("push view, %d in stack", size);
-
+	view.emplace_back(std::unique_ptr<View>(&v), true);
+	logMsg("push view, %d in stack", (int)view.size());
 	if(nav)
 	{
-		nav->setLeftBtnActive(size > 1);
+		showNavLeftBtn();
 	}
 }
 
 void ViewStack::pushAndShow(View &v, Input::Event e, bool needsNavView)
 {
-	useNavView = needsNavView;
 	push(v, e);
+	view.back().needsNavView = needsNavView;
 	place();
 	v.show();
 	v.postDraw();
@@ -170,16 +165,14 @@ void ViewStack::pushAndShow(View &v, Input::Event e)
 
 void ViewStack::pop()
 {
-	assert(size > 1);
-	delete &top();
-	size--;
-	logMsg("pop view, %d in stack", size);
+	assert(view.size() > 1);
+	view.pop_back();
+	logMsg("pop view, %d in stack", (int)view.size());
 
 	if(nav)
 	{
-		nav->setLeftBtnActive(size > 1);
+		showNavLeftBtn();
 		nav->setTitle(top().name());
-		useNavView = 1;
 	}
 }
 
@@ -193,7 +186,7 @@ void ViewStack::popAndShow()
 
 void ViewStack::popToRoot()
 {
-	while(size > 1)
+	while(view.size() > 1)
 		pop();
 	place();
 	top().show();
@@ -202,7 +195,7 @@ void ViewStack::popToRoot()
 
 void ViewStack::popTo(View &v)
 {
-	while(size > 1 && view[size-1] != &v)
+	while(view.size() > 1 && &top() != &v)
 		pop();
 	place();
 	top().show();
@@ -216,21 +209,21 @@ void ViewStack::show()
 
 View &ViewStack::top() const
 {
-	assert(size != 0);
-	return *view[size-1];
+	assert(view.size());
+	return *view.back().v;
 }
 
 View &ViewStack::viewAtIdx(uint idx) const
 {
-	assert(idx < size);
-	return *view[idx];
+	assert(idx < view.size());
+	return *view[idx].v;
 }
 
 int ViewStack::viewIdx(View &v) const
 {
-	iterateTimes(size, i)
+	iterateTimes(view.size(), i)
 	{
-		if(view[i] == &v)
+		if(view[i].v.get() == &v)
 			return i;
 	}
 	return -1;
@@ -247,10 +240,44 @@ void ViewStack::dismissView(View &v)
 	if(contains(v))
 	{
 		assert(viewIdx(v) != 0);
-		popTo(*view[viewIdx(v)-1]);
+		popTo(*view[viewIdx(v)-1].v);
 	}
 	else
 	{
 		pop();
 	}
+}
+
+void ViewStack::showNavView(bool show)
+{
+	showNavView_ = show;
+}
+
+void ViewStack::setShowNavViewBackButton(bool show)
+{
+	showNavBackBtn = show;
+	if(nav)
+		showNavLeftBtn();
+}
+
+void ViewStack::showNavLeftBtn()
+{
+	nav->showLeftBtn(showNavBackBtn && view.size() > 1);
+}
+
+uint ViewStack::size() const
+{
+	return view.size();
+}
+
+bool ViewStack::topNeedsNavView() const
+{
+	if(!view.size())
+		return false;
+	return view.back().needsNavView;
+}
+
+bool ViewStack::navViewIsActive() const
+{
+	return nav && showNavView_ && topNeedsNavView();
 }

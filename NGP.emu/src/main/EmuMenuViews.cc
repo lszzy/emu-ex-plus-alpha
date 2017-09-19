@@ -1,8 +1,8 @@
 #include <neopop.h>
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomSystemOptionView : public SystemOptionView
 {
 	BoolMenuItem ngpLanguage
 	{
@@ -16,22 +16,18 @@ class EmuSystemOptionView : public SystemOptionView
 	};
 
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&ngpLanguage);
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new MenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new VideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
 		default: return nullptr;
 	}
 }

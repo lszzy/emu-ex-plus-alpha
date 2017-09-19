@@ -19,6 +19,7 @@
 #include <imagine/pixmap/Pixmap.hh>
 #include <imagine/data-type/image/GfxImageSource.hh>
 #include <imagine/io/FileIO.hh>
+#include <system_error>
 
 #define PNG_SKIP_SETJMP_CHECK
 #include <png.h>
@@ -29,14 +30,15 @@ class Png
 {
 public:
 	constexpr Png() {}
-	CallResult readHeader(GenericIO io);
-	CallResult readImage(IG::Pixmap &dest);
+	std::error_code readHeader(GenericIO io);
+	std::errc readImage(IG::Pixmap &dest);
 	bool hasAlphaChannel();
 	bool isGrayscale();
 	void freeImageData();
 	uint width();
 	uint height();
 	IG::PixelFormat pixelFormat();
+	explicit operator bool() const;
 
 private:
 	png_structp png = nullptr;
@@ -54,16 +56,17 @@ public:
 	{
 		deinit();
 	}
-	CallResult load(GenericIO io);
-	CallResult load(const char *name);
-	CallResult loadAsset(const char *name)
+	std::error_code load(GenericIO io);
+	std::error_code load(const char *name);
+	std::error_code loadAsset(const char *name)
 	{
-		return load(openAppAssetIO(name));
+		return load(openAppAssetIO(name, IO::AccessHint::ALL).makeGeneric());
 	}
 	void deinit();
-	CallResult write(IG::Pixmap &dest) override;
-	IG::Pixmap lockPixmap() override;
-	void unlockPixmap() override;
+	std::errc write(IG::Pixmap dest) final;
+	IG::Pixmap lockPixmap() final;
+	void unlockPixmap() final;
+	explicit operator bool() const final;
 
 private:
 	Png png;

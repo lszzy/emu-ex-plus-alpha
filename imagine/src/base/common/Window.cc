@@ -22,8 +22,6 @@
 namespace Base
 {
 
-OnGLDrawableChangedDelegate onGLDrawableChanged;
-
 #ifdef CONFIG_BASE_MULTI_WINDOW
 StaticArrayList<Window*, 4> window_;
 #else
@@ -52,7 +50,7 @@ void BaseWindow::setOnDragDrop(DragDropDelegate del)
 
 void BaseWindow::setOnInputEvent(InputEventDelegate del)
 {
-	onInputEvent = del ? del : [](Window &, Input::Event ){};
+	onInputEvent = del ? del : [](Window &, Input::Event ){ return false; };
 }
 
 void BaseWindow::setOnDismissRequest(DismissRequestDelegate del)
@@ -185,9 +183,9 @@ void Window::setNeedsCustomViewportResize(bool needsResize)
 
 }
 
-void Window::dispatchInputEvent(Input::Event event)
+bool Window::dispatchInputEvent(Input::Event event)
 {
-	onInputEvent.callCopy(*this, event);
+	return onInputEvent.callCopy(*this, event);
 }
 
 void Window::dispatchFocusChange(bool in)
@@ -207,7 +205,7 @@ void Window::dispatchDismissRequest()
 
 void Window::dispatchSurfaceChange()
 {
-	onSurfaceChange.callCopy(*this, moveAndClear(surfaceChange));
+	onSurfaceChange.callCopy(*this, IG::moveAndClear(surfaceChange));
 }
 
 void Window::dispatchOnDraw()
@@ -312,7 +310,7 @@ bool Window::setValidOrientations(uint oMask)
 			return requestOrientationChange(VIEW_ROTATE_270);
 		else
 		{
-			bug_exit("bad orientation mask: 0x%X", oMask);
+			bug_unreachable("bad orientation mask: 0x%X", oMask);
 		}
 	}
 	return false;
@@ -381,11 +379,6 @@ void Window::dismiss()
 	#else
 	mainWin = nullptr;
 	#endif
-}
-
-void setOnGLDrawableChanged(OnGLDrawableChangedDelegate del)
-{
-	onGLDrawableChanged = del;
 }
 
 }

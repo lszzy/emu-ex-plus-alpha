@@ -13,12 +13,16 @@
 	You should have received a copy of the GNU General Public License
 	along with 2600.emu.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <emuframework/OptionView.hh>
-#include <stella/emucore/Console.hxx>
+
 #include "OSystem.hxx"
+#include <stella/emucore/Console.hxx>
+#include <emuframework/OptionView.hh>
 
 static constexpr uint TV_PHOSPHOR_AUTO = 2;
-extern Byte1Option optionTVPhosphor, optionVideoSystem;
+extern Byte1Option optionTVPhosphor;
+extern Byte1Option optionVideoSystem;
 extern OSystem osystem;
 extern Properties defaultGameProps;
 extern bool p1DiffB, p2DiffB, vcsColor;
+
+const char *optionVideoSystemToStr();

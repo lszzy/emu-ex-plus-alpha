@@ -22,6 +22,7 @@
  ****************************************************************************************/
 
 #include <imagine/util/algorithm.h>
+#include <emuframework/EmuApp.hh>
 #include "shared.h"
 #include "Fir_Resampler.h"
 #include "eq.h"
@@ -34,20 +35,21 @@
 
 /* Global variables */
 //t_bitmap bitmap;
-t_snd snd;
+t_snd snd{44100, 60};
 uint32 mcycles_vdp;
 //uint32 Z80.cycleCount;
 //uint32 mcycles_68k;
 uint8 system_hw;
-void (*system_frame)(int do_skip, uint renderGfx);
+void (*system_frame)(EmuVideo *emuVideo);
 int (*audioUpdateFunc)(int16 *sb);
 
 template <bool hasSegaCD = 0>
-static void system_frame_md(int do_skip, uint renderGfx);
-static void system_frame_sms(int do_skip, uint renderGfx);
+static void system_frame_md(EmuVideo *emuVideo);
+static void system_frame_sms(EmuVideo *emuVideo);
 static int pause_b;
 static EQSTATE eq;
 static int32 llp,rrp;
+static constexpr auto pixFmt = IG::PIXEL_FMT_RGB565;
 
 /****************************************************************
  * Audio subsystem
@@ -349,12 +351,14 @@ static void runM68k(uint cycles)
 	#endif
 }
 
-template void system_frame_md<0>(int do_skip, uint renderGfx);
-template void system_frame_md<1>(int do_skip, uint renderGfx);
+template void system_frame_md<0>(EmuVideo *emuVideo);
+template void system_frame_md<1>(EmuVideo *emuVideo);
 
 template <bool hasSegaCD>
-static void system_frame_md(int do_skip, uint renderGfx)
+static void system_frame_md(EmuVideo *emuVideo)
 {
+	int do_skip = !emuVideo;
+
 	//logMsg("start frame");
   /* line counter */
   int line = 0;
@@ -485,6 +489,14 @@ static void system_frame_md(int do_skip, uint renderGfx)
   /* update line cycle count */
   mcycles_vdp += MCYCLES_PER_LINE;
 
+  EmuVideoImage img{};
+  if(!do_skip)
+  {
+  	emuVideo->setFormat({{bitmap.viewport.w, bitmap.viewport.h}, pixFmt});
+  	img = emuVideo->startFrame();
+  	gPixmap = img.pixmap();
+  }
+
   /* Active Display */
   do
   {
@@ -521,7 +533,7 @@ static void system_frame_md(int do_skip, uint renderGfx)
     /* render scanline */
     if (!do_skip)
     {
-      render_line(line);
+      render_line(line, img.pixmap());
     }
 
     /* run 68k & Z80 */
@@ -553,8 +565,11 @@ static void system_frame_md(int do_skip, uint renderGfx)
   }
   while (++line < bitmap.viewport.h);
 
-  void commitVideoFrame();
-  if(renderGfx) commitVideoFrame();
+  if(img)
+  {
+  	img.endFrame();
+  	gPixmap = {};
+  }
 
   /* end of active display */
   v_counter = line;
@@ -743,8 +758,10 @@ static void system_frame_md(int do_skip, uint renderGfx)
 }
 
 
-static void system_frame_sms(int do_skip, uint renderGfx)
+static void system_frame_sms(EmuVideo *emuVideo)
 {
+	int do_skip = !emuVideo;
+
   /* line counter */
   int line = 0;
 
@@ -870,6 +887,13 @@ static void system_frame_sms(int do_skip, uint renderGfx)
   /* latch Vertical Scroll register */
   vscroll = reg[0x09];
 
+  EmuVideoImage img{};
+  if(!do_skip)
+  {
+  	emuVideo->setFormat({{bitmap.viewport.w, bitmap.viewport.h}, pixFmt});
+  	img = emuVideo->startFrame();
+  }
+
   /* Active Display */
   do
   {
@@ -888,7 +912,7 @@ static void system_frame_sms(int do_skip, uint renderGfx)
       /* render scanline */
       if (!do_skip)
       {
-        render_line(line);
+        render_line(line, img.pixmap());
       }
     }
 
@@ -926,8 +950,8 @@ static void system_frame_sms(int do_skip, uint renderGfx)
   }
   while (++line < bitmap.viewport.h);
 
-  void commitVideoFrame();
-  if(renderGfx) commitVideoFrame();
+  if(img)
+  	img.endFrame();
 
   /* end of active display */
   v_counter = line;

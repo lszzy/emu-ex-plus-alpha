@@ -19,6 +19,7 @@
 #include <imagine/pixmap/Pixmap.hh>
 #include <imagine/data-type/image/GfxImageSource.hh>
 #include <CoreGraphics/CGImage.h>
+#include <system_error>
 
 class PixelFormatDesc;
 
@@ -26,15 +27,16 @@ class Quartz2dImage
 {
 public:
 	constexpr Quartz2dImage() {}
-	CallResult load(const char *name);
-	CallResult readImage(IG::Pixmap &dest);
-	static CallResult writeImage(const IG::Pixmap &pix, const char *name);
+	std::error_code load(const char *name);
+	std::errc readImage(IG::Pixmap &dest);
+	static void writeImage(const IG::Pixmap &pix, const char *name);
 	bool hasAlphaChannel();
 	bool isGrayscale();
 	void freeImageData();
 	uint width();
 	uint height();
 	const IG::PixelFormat pixelFormat();
+	explicit operator bool() const;
 
 private:
 	CGImageRef img = nullptr;
@@ -48,12 +50,13 @@ public:
 	{
 		deinit();
 	}
-	CallResult load(const char *name);
-	CallResult loadAsset(const char *name);
+	std::error_code load(const char *name);
+	std::error_code loadAsset(const char *name);
 	void deinit();
-	CallResult write(IG::Pixmap &dest) override;
-	IG::Pixmap lockPixmap() override;
-	void unlockPixmap() override;
+	std::errc write(IG::Pixmap dest) final;
+	IG::Pixmap lockPixmap() final;
+	void unlockPixmap() final;
+	explicit operator bool() const final;
 
 private:
 	Quartz2dImage png;

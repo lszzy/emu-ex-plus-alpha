@@ -1310,7 +1310,7 @@ bool CPUImportEepromFile(GBASys &gba, const char *fileName)
 bool CPUReadBatteryFile(GBASys &gba, const char *fileName)
 {
 	FileIO file;
-	file.open(fileName);
+	file.open(fileName, IO::AccessHint::ALL);
   if(!file)
     return false;
 
@@ -2922,7 +2922,7 @@ void CPUInit(GBASys &gba, const char *biosFileName, bool useBiosFile)
   useBios = false;
 
   if(useBiosFile) {
-  	bug_exit("TODO");
+  	bug_unreachable("TODO");
   	#if 0
     int size = 0x4000;
     if(utilLoad(biosFileName,
@@ -3208,7 +3208,7 @@ void CPUInterrupt(GBASys &gba, ARM7TDMI &cpu)
 	gba.biosProtected[3] = 0xe5;
 }
 
-void CPULoop(GBASys &gba, bool renderGfx, bool processGfx, bool renderAudio)
+void CPULoop(GBASys &gba, EmuVideo *video, bool renderAudio)
 {
 	auto cpu = gba.cpu;
 	auto &holdState = cpu.holdState;
@@ -3407,7 +3407,7 @@ void CPULoop(GBASys &gba, bool renderGfx, bool processGfx, bool renderAudio)
             CPUCompareVCOUNT(cpu);
 
           } else {
-            if(processGfx)
+            if(video)
             {
             	/*if(trackOAM)
             	{
@@ -3461,17 +3461,9 @@ void CPULoop(GBASys &gba, bool renderGfx, bool processGfx, bool renderAudio)
 				#endif
               }*/
             }
-            if(ioMem.VCOUNT == 159 && likely(renderGfx))
+            if(ioMem.VCOUNT == 159 && likely(video))
             {
-            	if(likely(processGfx) && !directColorLookup)
-            	{
-            		for(int x = 0; x < 240*160; x++)
-            		{
-            			gba.lcd.pix[x] = systemColorMap.map16[gba.lcd.pix[x]];
-            		}
-            	}
-            	if(likely(renderGfx))
-            		systemDrawScreen();
+            	systemDrawScreen(*video);
             }
             // entering H-Blank
             ioMem.DISPSTAT |= 2;

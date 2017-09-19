@@ -4,7 +4,6 @@ inc_main := 1
 include $(IMAGINE_PATH)/make/imagineAppBase.mk
 
 CPPFLAGS += -DHAVE_STDINT_H \
--DGAMBATTE_CONST_FB_PITCH=160 \
 -DGAMBATTE_NO_OSD \
 -I$(projectPath)/src \
 -I$(projectPath)/src/libgambatte/include \
@@ -41,6 +40,8 @@ src/loadres.cpp
 
 libgambattePath := libgambatte
 SRC += main/Main.cc \
+main/options.cc \
+main/input.cc \
 main/EmuControls.cc \
 main/EmuMenuViews.cc \
 main/Cheats.cc \

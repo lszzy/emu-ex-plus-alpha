@@ -18,7 +18,7 @@
 #include <imagine/fs/ArchiveFS.hh>
 #include <imagine/io/FileIO.hh>
 #include <imagine/logger/logger.h>
-#include <imagine/util/assume.h>
+#include <imagine/util/utility.h>
 #include <imagine/util/string.h>
 #include <archive.h>
 #include <archive_entry.h>
@@ -48,19 +48,19 @@ static void setReadSupport(struct archive *arch)
 	archive_read_support_format_zip(arch);
 }
 
-void ArchiveIterator::init(const char *path, CallResult &result)
+void ArchiveIterator::init(const char *path, std::error_code &ec)
 {
 	FileIO file;
-	auto fileRes = file.open(path);
-	if(fileRes != OK)
+	auto fileEC = file.open(path, IO::AccessHint::SEQUENTIAL);
+	if(fileEC)
 	{
-		result = fileRes;
+		ec = fileEC;
 		return;
 	}
-	init(GenericIO{std::move(file)}, result);
+	init(file.makeGeneric(), ec);
 }
 
-void ArchiveIterator::init(GenericIO io, CallResult &result)
+void ArchiveIterator::init(GenericIO io, std::error_code &result)
 {
 	archEntry.arch = {archive_read_new(),
 		[](struct archive *arch)
@@ -156,31 +156,31 @@ void ArchiveIterator::init(GenericIO io, CallResult &result)
 		if(Config::DEBUG_BUILD)
 			logErr("error opening archive:%s", archive_error_string(archEntry.arch.get()));
 		archEntry.arch = {};
-		result = READ_ERROR;
+		result = {EILSEQ, std::system_category()};
 		return;
 	}
-	result = OK;
+	result.clear();
 	++(*static_cast<ArchiveIterator*>(this)); // go to first entry
 }
 
 ArchiveIterator::ArchiveIterator(const char *path)
 {
-	CallResult dummy;
+	std::error_code dummy;
 	init(path, dummy);
 }
 
-ArchiveIterator::ArchiveIterator(const char *path, CallResult &result)
+ArchiveIterator::ArchiveIterator(const char *path, std::error_code &result)
 {
 	init(path, result);
 }
 
 ArchiveIterator::ArchiveIterator(GenericIO io)
 {
-	CallResult dummy;
+	std::error_code dummy;
 	init(std::move(io), dummy);
 }
 
-ArchiveIterator::ArchiveIterator(GenericIO io, CallResult &result)
+ArchiveIterator::ArchiveIterator(GenericIO io, std::error_code &result)
 {
 	init(std::move(io), result);
 }
@@ -202,19 +202,21 @@ void ArchiveIterator::operator++()
 	if(!archEntry.arch) // check in case archive object was moved out
 		return;
 	auto ret = archive_read_next_header(archEntry.arch.get(), &archEntry.ptr);
-	if(ret != ARCHIVE_OK)
+	if(ret == ARCHIVE_EOF)
 	{
-		if(ret == ARCHIVE_EOF)
-		{
-			logErr("reached archive end");
-		}
-		else
-		{
-			if(Config::DEBUG_BUILD)
-				logErr("error reading archive entry:%s", archive_error_string(archEntry.arch.get()));
-		}
+		logMsg("reached archive end");
 		archEntry.arch = {};
-		return;
+	}
+	else if(ret <= ARCHIVE_FAILED)
+	{
+		if(Config::DEBUG_BUILD)
+			logErr("error reading archive entry:%s", archive_error_string(archEntry.arch.get()));
+		archEntry.arch = {};
+	}
+	else if(ret != ARCHIVE_OK)
+	{
+		if(Config::DEBUG_BUILD)
+			logWarn("warning reading archive entry:%s", archive_error_string(archEntry.arch.get()));
 	}
 }
 
@@ -231,7 +233,7 @@ void ArchiveIterator::rewind()
 	auto io = std::move(archEntry.genericIO->io);
 	delete archEntry.genericIO;
 	archEntry.genericIO = nullptr;
-	CallResult dummy;
+	std::error_code dummy;
 	logMsg("re-opening archive");
 	init(std::move(io), dummy);
 }

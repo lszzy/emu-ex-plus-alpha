@@ -13,95 +13,104 @@
 	You should have received a copy of the GNU General Public License
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
+#define LOGTAG "EmuVideo"
 #include <emuframework/EmuVideo.hh>
 #include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/Screenshot.hh>
+#include "private.hh"
 
-void EmuVideo::initPixmap(char *pixBuff, IG::PixelFormat format, uint x, uint y, uint pitch)
+void EmuVideo::resetImage()
 {
-	if(!pitch)
-		vidPix = {{{(int)x, (int)y}, format}, pixBuff};
-	else
-		vidPix = {{{(int)x, (int)y}, format}, pixBuff, {pitch, vidPix.BYTE_UNITS}};
-	this->pixBuff = pixBuff;
+	auto desc = vidImg.usedPixmapDesc();
+	vidImg.deinit();
+	setFormat(desc);
 }
 
-void EmuVideo::reinitImage()
+void EmuVideo::setFormat(IG::PixmapDesc desc)
 {
-	Gfx::TextureConfig conf{vidPix};
-	conf.setWillWriteOften(true);
-	vidImg.init(conf);
-
+	if(vidImg && desc == vidImg.usedPixmapDesc())
+	{
+		return; // no change to format
+	}
+	memPix = {};
+	if(!vidImg)
+	{
+		Gfx::TextureConfig conf{desc};
+		conf.setWillWriteOften(true);
+		vidImg.init(r, conf);
+	}
+	else
+	{
+		vidImg.setFormat(desc, 1);
+	}
+	logMsg("resized to:%dx%d", desc.w(), desc.h());
 	// update all EmuVideoLayers
 	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
 	emuVideoLayer.setEffect(optionImgEffect);
 	#else
 	emuVideoLayer.resetImage();
 	#endif
-}
-
-void EmuVideo::clearImage()
-{
-	if(vidImg)
-	{
-		vidImg.clear(0);
-	}
-}
-
-void EmuVideo::resizeImage(uint x, uint y, uint pitch)
-{
-	resizeImage(0, 0, x, y, x, y, pitch);
-}
-
-void EmuVideo::resizeImage(uint xO, uint yO, uint x, uint y, uint totalX, uint totalY, uint pitch)
-{
-	IG::Pixmap basePix;
-	if(pitch)
-		basePix = {{{(int)totalX, (int)totalY}, vidPix.format()}, pixBuff, {pitch, vidPix.BYTE_UNITS}};
-	else
-		basePix = {{{(int)totalX, (int)totalY}, vidPix.format()}, pixBuff};
-	vidPix = basePix.subPixmap({(int)xO, (int)yO}, {(int)x, (int)y});
-	if(!vidImg)
-	{
-		reinitImage();
-	}
-	else if(vidPix != vidImg.usedPixmapDesc())
-	{
-		vidImg.setFormat(vidPix, 1);
-	}
-	vidPixAlign = vidImg.bestAlignment(vidPix);
-	logMsg("using %d:%d:%d:%d region of %d,%d pixmap for EmuView, aligned to min %d bytes", xO, yO, x, y, totalX, totalY, vidPixAlign);
-
-	// update all EmuVideoLayers
-	emuVideoLayer.resetImage();
 	if((uint)optionImageZoom > 100)
 		placeEmuViews();
 }
 
-void EmuVideo::initImage(bool force, uint x, uint y, uint pitch)
+EmuVideoImage EmuVideo::startFrame()
 {
-	if(force || !vidImg || vidPix.w() != x || vidPix.h() != y)
+	auto lockedTex = vidImg.lock(0);
+	if(!lockedTex)
 	{
-		resizeImage(x, y, pitch);
+		if(!memPix)
+		{
+			logMsg("created backing memory pixmap");
+			memPix = {vidImg.usedPixmapDesc()};
+		}
+		return {*this, (IG::Pixmap)memPix};
+	}
+	return {*this, lockedTex};
+}
+
+void EmuVideo::writeFrame(Gfx::LockedTextureBuffer texBuff)
+{
+	if(screenshotNextFrame)
+	{
+		doScreenshot(texBuff.pixmap());
+	}
+	vidImg.unlock(texBuff);
+	if(renderNextFrame)
+	{
+		renderNextFrame = false;
+		updateAndDrawEmuVideo();
 	}
 }
 
-void EmuVideo::initImage(bool force, uint xO, uint yO, uint x, uint y, uint totalX, uint totalY, uint pitch)
+void EmuVideo::writeFrame(IG::Pixmap pix)
 {
-	if(force || !vidImg || vidPix.w() != x || vidPix.h() != y)
+	if(screenshotNextFrame)
 	{
-		resizeImage(xO, yO, x, y, totalX, totalY, pitch);
+		doScreenshot(pix);
 	}
-}
-
-void EmuVideo::updateImage()
-{
-	vidImg.write(0, vidPix, {}, vidPixAlign);
+	vidImg.write(0, pix, {}, vidImg.bestAlignment(pix));
+	if(renderNextFrame)
+	{
+		renderNextFrame = false;
+		updateAndDrawEmuVideo();
+	}
 }
 
 void EmuVideo::takeGameScreenshot()
 {
+	screenshotNextFrame = true;
+}
+
+void EmuVideo::renderNextFrameToApp()
+{
+	renderNextFrame = true;
+}
+
+void EmuVideo::doScreenshot(IG::Pixmap pix)
+{
+	screenshotNextFrame = false;
 	FS::PathString path;
 	int screenshotNum = sprintScreenshotFilename(path);
 	if(screenshotNum == -1)
@@ -110,7 +119,7 @@ void EmuVideo::takeGameScreenshot()
 	}
 	else
 	{
-		if(!writeScreenshot(vidPix, path.data()))
+		if(!writeScreenshot(pix, path.data()))
 		{
 			popup.printf(2, 1, "Error writing screenshot #%d", screenshotNum);
 		}
@@ -128,4 +137,29 @@ bool EmuVideo::isExternalTexture()
 	#else
 	return false;
 	#endif
+}
+
+Gfx::PixmapTexture &EmuVideo::image()
+{
+	return vidImg;
+}
+
+void EmuVideoImage::endFrame()
+{
+	if(texBuff)
+	{
+		emuVideo->writeFrame(texBuff);
+	}
+	else if(pix)
+	{
+		emuVideo->writeFrame(pix);
+	}
+}
+
+IG::WP EmuVideo::size() const
+{
+	if(!vidImg)
+		return {};
+	else
+		return vidImg.usedPixmapDesc().size();
 }

@@ -73,6 +73,56 @@ public:
 	char *pixel(IG::WP pos) const;
 	void write(const IG::Pixmap &pixmap);
 	void write(const IG::Pixmap &pixmap, IG::WP destPos);
+
+	template <class FUNC>
+	static constexpr bool checkTransformFunc()
+	{
+		constexpr bool isValid = std::is_arithmetic<IG::functionTraitsRType<FUNC>>::value
+			&& IG::functionTraitsArity<FUNC> == 1;
+		static_assert(isValid, "Transform function must take 1 argument and return an arithmetic value");
+		return isValid;
+	}
+
+	template <class FUNC>
+	void writeTransformed(FUNC func, const IG::Pixmap &pixmap)
+	{
+		if constexpr(!checkTransformFunc<FUNC>())
+		{
+			return;
+		}
+		auto srcBytesPerPixel = pixmap.format().bytesPerPixel();
+		switch(format().bytesPerPixel())
+		{
+			bcase 1:
+				switch(srcBytesPerPixel)
+				{
+					bcase 1: writeTransformed2<uint8, uint8>(func, pixmap);
+					bcase 2: writeTransformed2<uint16, uint8>(func, pixmap);
+					bcase 4: writeTransformed2<uint32, uint8>(func, pixmap);
+				}
+			bcase 2:
+				switch(srcBytesPerPixel)
+				{
+					bcase 1: writeTransformed2<uint8, uint16>(func, pixmap);
+					bcase 2: writeTransformed2<uint16, uint16>(func, pixmap);
+					bcase 4: writeTransformed2<uint32, uint16>(func, pixmap);
+				}
+			bcase 4:
+				switch(srcBytesPerPixel)
+				{
+					bcase 1: writeTransformed2<uint8, uint32>(func, pixmap);
+					bcase 2: writeTransformed2<uint16, uint32>(func, pixmap);
+					bcase 4: writeTransformed2<uint32, uint32>(func, pixmap);
+				}
+		}
+	}
+
+	template <class FUNC>
+	void writeTransformed(FUNC func, const IG::Pixmap &pixmap, IG::WP destPos)
+	{
+		subPixmap(destPos, size() - destPos).writeTransformed(func, pixmap);
+	}
+
 	void clear(IG::WP pos, IG::WP size);
 	void clear();
 	Pixmap subPixmap(IG::WP pos, IG::WP size) const;
@@ -81,10 +131,40 @@ public:
 	uint pitchBytes() const;
 	uint bytes() const;
 	bool isPadded() const;
+	uint paddingPixels() const;
+	uint paddingBytes() const;
 
 protected:
 	void *data{};
 	uint pitch = 0; // in bytes
+
+	template <class SRC_T, class DEST_T, class FUNC>
+	void writeTransformed2(FUNC func, const IG::Pixmap &pixmap)
+	{
+		auto srcData = (SRC_T*)pixmap.data;
+		auto destData = (DEST_T*)data;
+		if(w() == pixmap.w() && !isPadded() && !pixmap.isPadded())
+		{
+			iterateTimes(pixmap.w() * pixmap.h(), i)
+			{
+				*destData++ = func(*srcData++);
+			}
+		}
+		else
+		{
+			iterateTimes(pixmap.h(), h)
+			{
+				auto destLineData = destData;
+				auto srcLineData = srcData;
+				iterateTimes(pixmap.w(), w)
+				{
+					*destLineData++ = func(*srcLineData++);
+				}
+				srcData += pixmap.pitchPixels();
+				destData += pitchPixels();
+			}
+		}
+	}
 };
 
 class MemPixmap : public Pixmap

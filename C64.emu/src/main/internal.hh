@@ -4,18 +4,19 @@
 #include <imagine/thread/Semaphore.hh>
 #include <imagine/pixmap/PixelFormat.hh>
 #include <emuframework/OptionView.hh>
+#include <emuframework/EmuSystem.hh>
 
 extern VicePlugin plugin;
 extern ViceSystem currSystem;
 extern FS::PathString sysFilePath[Config::envIsLinux ? 5 : 3];
 extern bool doAudio;
 extern bool runningFrame;
-extern uint c64VidX, c64VidY;
-alignas(8) extern uint16 pix[1024*512];
+extern bool autostartOnLoad;
 static constexpr auto pixFmt = IG::PIXEL_FMT_RGB565;
 extern IG::Semaphore execSem, execDoneSem;
 extern double systemFrameRate;
-extern uint c64VidActiveX, c64VidActiveY;
+extern struct video_canvas_s *activeCanvas;
+extern IG::Pixmap canvasSrcPix;
 extern FS::PathString firmwareBasePath;
 extern Byte1Option optionDriveTrueEmulation;
 extern Byte1Option optionVirtualDeviceTraps;
@@ -63,4 +64,6 @@ void setDefaultVIC20Model(int model);
 bool hasC64DiskExtension(const char *name);
 bool hasC64TapeExtension(const char *name);
 bool hasC64CartExtension(const char *name);
-int loadGame(const char *path, bool autoStartMedia);
+int optionModel(ViceSystem system);
+void resetCanvasSourcePixmap(struct video_canvas_s *c);
+

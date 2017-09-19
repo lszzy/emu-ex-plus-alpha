@@ -72,17 +72,17 @@ void writeCheatFile()
 	}
 	logMsg("writing cheats file %s", filename.data());
 
-	CallResult r;
+	std::error_code ec{};
 	int version = 0;
-	file.writeVal((uint8)version, &r);
-	file.writeVal((uint16)cheatList.size(), &r);
+	file.writeVal((uint8)version, &ec);
+	file.writeVal((uint16)cheatList.size(), &ec);
 	for(auto &e : cheatList)
 	{
-		file.writeVal((uint8)e.flags, &r);
-		file.writeVal((uint16)strlen(e.name), &r);
-		file.write(e.name, strlen(e.name), &r);
-		file.writeVal((uint8)strlen(e.code), &r);
-		file.write(e.code, strlen(e.code), &r);
+		file.writeVal((uint8)e.flags, &ec);
+		file.writeVal((uint16)strlen(e.name), &ec);
+		file.write(e.name, strlen(e.name), &ec);
+		file.writeVal((uint8)strlen(e.code), &ec);
+		file.write(e.code, strlen(e.code), &ec);
 	}
 	cheatsModified = 0;
 }
@@ -91,7 +91,7 @@ void readCheatFile()
 {
 	auto filename = FS::makePathStringPrintf("%s/%s.gbcht", EmuSystem::savePath(), EmuSystem::gameName().data());
 	FileIO file;
-	file.open(filename.data());
+	file.open(filename.data(), IO::AccessHint::ALL);
 	if(!file)
 	{
 		return;
@@ -129,11 +129,11 @@ void EmuEditCheatView::renamed(const char *str)
 	cheatsModified = 1;
 }
 
-EmuEditCheatView::EmuEditCheatView(Base::Window &win, GbcCheat &cheat_):
+EmuEditCheatView::EmuEditCheatView(ViewAttachParams attach, GbcCheat &cheat_):
 	BaseEditCheatView
 	{
 		"Edit Code",
-		win,
+		attach,
 		cheat_.name,
 		[this](const TableView &)
 		{
@@ -152,7 +152,7 @@ EmuEditCheatView::EmuEditCheatView(Base::Window &win, GbcCheat &cheat_):
 		{
 			cheatList.remove(*cheat);
 			cheatsModified = 1;
-			refreshCheatViews();
+			EmuApp::refreshCheatViews();
 			applyCheats();
 			dismiss();
 			return true;
@@ -164,16 +164,15 @@ EmuEditCheatView::EmuEditCheatView(Base::Window &win, GbcCheat &cheat_):
 		cheat_.code,
 		[this](DualTextMenuItem &item, View &, Input::Event e)
 		{
-			auto &textInputView = *new CollectTextInputView{window()};
-			textInputView.init("Input xxxxxxxx (GS) or xxx-xxx-xxx (GG) code", cheat->code, getCollectTextCloseAsset());
-			textInputView.onText() =
+			EmuApp::pushAndShowNewCollectTextInputView(attachParams(), e,
+				"Input xxxxxxxx (GS) or xxx-xxx-xxx (GG) code", cheat->code,
 				[this](CollectTextInputView &view, const char *str)
 				{
 					if(str)
 					{
 						if(!strIsGGCode(str) && !strIsGSCode(str))
 						{
-							popup.postError("Invalid format");
+							EmuApp::postMessage(true, "Invalid format");
 							window().postDraw();
 							return 1;
 						}
@@ -181,22 +180,21 @@ EmuEditCheatView::EmuEditCheatView(Base::Window &win, GbcCheat &cheat_):
 						string_toUpper(cheat->code);
 						cheatsModified = 1;
 						applyCheats();
-						ggCode.compile(projP);
+						ggCode.compile(renderer(), projP);
 						window().postDraw();
 					}
 					view.dismiss();
 					return 0;
-				};
-			modalViewController.pushAndShow(textInputView, e);
+				});
 		}
 	},
 	cheat{&cheat_}
 {}
 
-EmuEditCheatListView::EmuEditCheatListView(Base::Window &win):
+EmuEditCheatListView::EmuEditCheatListView(ViewAttachParams attach):
 	BaseEditCheatListView
 	{
-		win,
+		attach,
 		[this](const TableView &)
 		{
 			return 1 + cheat.size();
@@ -215,22 +213,21 @@ EmuEditCheatListView::EmuEditCheatListView(Base::Window &win):
 		"Add Game Genie / GameShark Code",
 		[this](TextMenuItem &item, View &, Input::Event e)
 		{
-			auto &textInputView = *new CollectTextInputView{window()};
-			textInputView.init("Input xxxxxxxx (GS) or xxx-xxx-xxx (GG) code", getCollectTextCloseAsset());
-			textInputView.onText() =
+			EmuApp::pushAndShowNewCollectTextInputView(attachParams(), e,
+				"Input xxxxxxxx (GS) or xxx-xxx-xxx (GG) code", "",
 				[this](CollectTextInputView &view, const char *str)
 				{
 					if(str)
 					{
 						if(cheatList.isFull())
 						{
-							popup.postError("Cheat list is full");
+							EmuApp::postMessage(true, "Cheat list is full");
 							view.dismiss();
 							return 0;
 						}
 						if(!strIsGGCode(str) && !strIsGSCode(str))
 						{
-							popup.postError("Invalid format");
+							EmuApp::postMessage(true, "Invalid format");
 							return 1;
 						}
 						GbcCheat c;
@@ -242,33 +239,29 @@ EmuEditCheatListView::EmuEditCheatListView(Base::Window &win):
 						cheatsModified = 1;
 						applyCheats();
 						view.dismiss();
-						auto &textInputView = *new CollectTextInputView{window()};
-						textInputView.init("Input description", getCollectTextCloseAsset());
-						textInputView.onText() =
+						EmuApp::refreshCheatViews();
+						EmuApp::pushAndShowNewCollectTextInputView(attachParams(), {}, "Input description", "",
 							[](CollectTextInputView &view, const char *str)
 							{
 								if(str)
 								{
 									string_copy(cheatList.back().name, str);
 									view.dismiss();
-									refreshCheatViews();
+									EmuApp::refreshCheatViews();
 								}
 								else
 								{
 									view.dismiss();
 								}
 								return 0;
-							};
-						refreshCheatViews();
-						modalViewController.pushAndShow(textInputView, {});
+							});
 					}
 					else
 					{
 						view.dismiss();
 					}
 					return 0;
-				};
-			modalViewController.pushAndShow(textInputView, e);
+				});
 		}
 	}
 {
@@ -287,14 +280,14 @@ void EmuEditCheatListView::loadCheatItems()
 		cheat.emplace_back(thisCheat.name,
 			[this, c](TextMenuItem &, View &, Input::Event e)
 			{
-				auto &editCheatView = *new EmuEditCheatView{window(), cheatList[c]};
-				viewStack.pushAndShow(editCheatView, e);
+				auto &editCheatView = *new EmuEditCheatView{attachParams(), cheatList[c]};
+				pushAndShow(editCheatView, e);
 			});
 		++it;
 	}
 }
 
-EmuCheatsView::EmuCheatsView(Base::Window &win): BaseCheatsView{win}
+EmuCheatsView::EmuCheatsView(ViewAttachParams attach): BaseCheatsView{attach}
 {
 	loadCheatItems();
 }

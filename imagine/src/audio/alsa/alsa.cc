@@ -60,7 +60,7 @@ static const SampleFormat &alsaFormatToPcm(snd_pcm_format_t format)
 		case SND_PCM_FORMAT_S8: return SampleFormats::s8;
 		case SND_PCM_FORMAT_U8: return SampleFormats::u8;
 		default:
-			bug_branch("%d", format);
+			bug_unreachable("format == %d", format);
 			return SampleFormats::none;
 	}
 }
@@ -72,7 +72,7 @@ static snd_pcm_format_t pcmFormatToAlsa(const SampleFormat &format)
 		case 16 : return SND_PCM_FORMAT_S16;
 		case 8 : return format.isSigned ? SND_PCM_FORMAT_S8 : SND_PCM_FORMAT_U8;
 		default:
-			bug_branch("%d", format.toBits());
+			bug_unreachable("bits == %d", format.toBits());
 			return (snd_pcm_format_t)0;
 	}
 }
@@ -298,9 +298,9 @@ static int setupPcm(const PcmFormat &format, snd_pcm_access_t access)
 	}
 }
 
-static CallResult openAlsaPcm(const PcmFormat &format)
+static std::error_code openAlsaPcm(const PcmFormat &format)
 {
-	int ret;
+	std::error_code ec{};
 	const char* name = "default";
 
 	logMsg("Opening playback device: %s", name);
@@ -309,7 +309,7 @@ static CallResult openAlsaPcm(const PcmFormat &format)
 	if ((err = snd_pcm_open(&pcmHnd, name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK)) < 0)
 	{
 		logErr("Playback open error: %s", snd_strerror(err));
-		return INVALID_PARAMETER;
+		return {EINVAL, std::system_category()};
 	}
 
 	logMsg("Stream parameters: %iHz, %s, %i channels", format.rate, snd_pcm_format_name(pcmFormatToAlsa(format.sample)), format.channels);
@@ -333,13 +333,13 @@ static CallResult openAlsaPcm(const PcmFormat &format)
 		setupPcmSuccess = 1;
 	if(!setupPcmSuccess)
 	{
-		ret = INVALID_PARAMETER; goto CLEANUP;
+		ec = {EINVAL, std::system_category()}; goto CLEANUP;
 	}
 
 	//snd_pcm_dump(alsaHnd, output);
 	//logMsg("pcm state: %s", alsaPcmStateToString(snd_pcm_state(pcmHnd)));
 
-	return OK;
+	return {};
 
 	CLEANUP:
 
@@ -349,7 +349,7 @@ static CallResult openAlsaPcm(const PcmFormat &format)
 		pcmHnd = 0;
 	}
 	
-	return ret;
+	return ec;
 }
 
 static void closeAlsaPcm()
@@ -362,12 +362,12 @@ static void closeAlsaPcm()
 	}
 }
 
-CallResult openPcm(const PcmFormat &format)
+std::error_code openPcm(const PcmFormat &format)
 {
 	if(isOpen())
 	{
 		logMsg("audio already open");
-		return OK;
+		return {};
 	}
 	pcmFormat = format;
 	return openAlsaPcm(format);

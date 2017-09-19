@@ -209,7 +209,7 @@ void x11FDHandler()
 	}
 }
 
-void initXScreens()
+void initXScreens(Display *dpy)
 {
 	auto defaultScreenIdx = DefaultScreen(dpy);
 	static Screen main;
@@ -229,7 +229,7 @@ void initXScreens()
 	#endif
 }
 
-CallResult initWindowSystem(EventLoopFileSource &eventSrc)
+CallResult initWindowSystem(EventLoop loop, FDEventSource &eventSrc)
 {
 	#ifndef CONFIG_BASE_X11_EGL
 	// needed to call glXWaitVideoSyncSGI in separate thread
@@ -241,10 +241,10 @@ CallResult initWindowSystem(EventLoopFileSource &eventSrc)
 		logErr("couldn't open display");
 		return IO_ERROR;
 	}
-	initXScreens();
-	initFrameTimer();
-	Input::init();
-	eventSrc.initX(ConnectionNumber(dpy));
+	initXScreens(dpy);
+	initFrameTimer(loop);
+	Input::init(dpy);
+	eventSrc = FDEventSource::makeXServerAddedToEventLoop(ConnectionNumber(dpy), loop);
 	return OK;
 }
 

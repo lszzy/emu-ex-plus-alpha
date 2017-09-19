@@ -15,26 +15,63 @@
 	You should have received a copy of the GNU General Public License
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
+#include <imagine/gfx/Gfx.hh>
 #include <imagine/gfx/Texture.hh>
+
+class EmuVideo;
+
+class EmuVideoImage
+{
+public:
+	EmuVideoImage() {}
+	EmuVideoImage(EmuVideo &vid, Gfx::LockedTextureBuffer texBuff):
+		emuVideo{&vid}, texBuff{texBuff} {}
+	EmuVideoImage(EmuVideo &vid, IG::Pixmap pix):
+		emuVideo{&vid}, pix{pix} {}
+
+	IG::Pixmap pixmap() const
+	{
+		if(texBuff)
+			return texBuff.pixmap();
+		else
+			return pix;
+	}
+
+	explicit operator bool() const
+	{
+		return texBuff || pix;
+	}
+
+	void endFrame();
+
+private:
+	EmuVideo *emuVideo{};
+	Gfx::LockedTextureBuffer texBuff{};
+	IG::Pixmap pix{};
+};
 
 class EmuVideo
 {
 public:
-	Gfx::PixmapTexture vidImg{};
-	IG::Pixmap vidPix{};
-	char *pixBuff{};
-	uint vidPixAlign = Gfx::Texture::MAX_ASSUME_ALIGN;
-
-public:
-	constexpr EmuVideo() {}
-	void initPixmap(char *pixBuff, IG::PixelFormat format, uint x, uint y, uint pitch = 0);
-	void reinitImage();
-	void clearImage();
-	void resizeImage(uint x, uint y, uint pitch = 0);
-	void resizeImage(uint xO, uint yO, uint x, uint y, uint totalX, uint totalY, uint pitch = 0);
-	void initImage(bool force, uint x, uint y, uint pitch = 0);
-	void initImage(bool force, uint xO, uint yO, uint x, uint y, uint totalX, uint totalY, uint pitch = 0);
-	void updateImage();
+	EmuVideo(Gfx::Renderer &r): r{r} {}
+	void setFormat(IG::PixmapDesc desc);
+	void resetImage();
+	EmuVideoImage startFrame();
+	void writeFrame(Gfx::LockedTextureBuffer texBuff);
+	void writeFrame(IG::Pixmap pix);
 	void takeGameScreenshot();
+	void renderNextFrameToApp();
 	bool isExternalTexture();
+	Gfx::PixmapTexture &image();
+	Gfx::Renderer &renderer() { return r; }
+	IG::WP size() const;
+
+protected:
+	Gfx::Renderer &r;
+	Gfx::PixmapTexture vidImg{};
+	IG::MemPixmap memPix{};
+	bool screenshotNextFrame = false;
+	bool renderNextFrame = false;
+
+	void doScreenshot(IG::Pixmap pix);
 };

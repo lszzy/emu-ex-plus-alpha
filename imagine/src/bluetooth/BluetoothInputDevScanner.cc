@@ -21,10 +21,10 @@
 #include <imagine/logger/logger.h>
 #include <imagine/base/Base.hh>
 #include <imagine/base/Timer.hh>
-#include <imagine/util/container/ArrayList.hh>
+#include "private.hh"
 
-StaticArrayList<BluetoothInputDevice*, Input::MAX_BLUETOOTH_DEVS_PER_TYPE * 2> btInputDevList;
-StaticArrayList<BluetoothInputDevice*, Input::MAX_BLUETOOTH_DEVS_PER_TYPE> btInputDevPendingList;
+std::vector<BluetoothInputDevice*> btInputDevList;
+std::vector<BluetoothInputDevice*> btInputDevPendingList;
 
 #ifdef CONFIG_BLUETOOTH_SERVER
 #include <imagine/bluetooth/PS3Controller.hh>
@@ -47,7 +47,7 @@ static bool testSupportedBTDevClasses(const uchar devClass[3])
 static void removePendingDevs()
 {
 	if(btInputDevPendingList.size())
-		logMsg("removing %d devices in pending list", btInputDevPendingList.size());
+		logMsg("removing %d devices in pending list", (int)btInputDevPendingList.size());
 	for(auto e : btInputDevPendingList)
 	{
 		delete e;
@@ -150,7 +150,7 @@ bool listenForDevices(BluetoothAdapter &bta, const BluetoothAdapter::OnStatusDel
 							bta.setL2capService(0x13, false, {});
 							hidServiceActive = false;
 						},
-						8);
+						8, {});
 				}
 			);
 		}
@@ -176,11 +176,6 @@ bool scanForDevices(BluetoothAdapter &bta, BluetoothAdapter::OnStatusDelegate on
 				if(!name)
 				{
 					onScanStatus(bta, BluetoothAdapter::SCAN_NAME_FAILED, 0);
-					return;
-				}
-				if(btInputDevPendingList.isFull())
-				{
-					logWarn("reached max devices for scan");
 					return;
 				}
 				if(strstr(name, "Nintendo RVL-CNT-01"))
@@ -237,7 +232,7 @@ uint pendingDevs()
 
 void connectPendingDevs(BluetoothAdapter *bta)
 {
-	logMsg("connecting to %d devices", btInputDevPendingList.size());
+	logMsg("connecting to %d devices", (int)btInputDevPendingList.size());
 	for(auto e : btInputDevPendingList)
 	{
 		if(e->open(*bta) != OK)

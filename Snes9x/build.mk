@@ -19,7 +19,9 @@ CPPFLAGS += \
 -DZLIB \
 -DUSE_OPENGL \
 -DPIXEL_FORMAT=RGB565
-#-DHAVE_MKSTEMP -DUSE_THREADS -DJMA_SUPPORT
+#-DHAVE_MKSTEMP -DUSE_THREADS
+
+CXXFLAGS_WARN += -Wno-register
 
 snes9xSrc := \
 bsx.cpp \
@@ -44,6 +46,7 @@ gfx.cpp \
 globals.cpp \
 loadzip.cpp \
 memmap.cpp \
+msu1.cpp \
 movie.cpp \
 obc1.cpp \
 ppu.cpp \
@@ -69,6 +72,8 @@ apu/bapu/smp/smp_state.cpp
 
 SRC += \
 main/Main.cc \
+main/input.cc \
+main/options.cc \
 main/S9XApi.cc \
 main/EmuControls.cc \
 main/EmuMenuViews.cc \

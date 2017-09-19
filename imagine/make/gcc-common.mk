@@ -7,7 +7,7 @@ CFLAGS_OPTIMIZE_LEVEL_RELEASE_DEFAULT ?= -O2
 CFLAGS_OPTIMIZE_RELEASE_DEFAULT ?= $(CFLAGS_OPTIMIZE_LEVEL_RELEASE_DEFAULT) $(CFLAGS_OPTIMIZE_MISC_RELEASE_DEFAULT)
 CFLAGS_CODEGEN += -pipe -fvisibility=hidden
 CFLAGS_LANG = -std=gnu99 -fno-common
-CXXFLAGS_LANG = -std=gnu++14 $(if $(cxxRTTI),,-fno-rtti) $(if $(cxxExceptions),,-fno-exceptions) \
+CXXFLAGS_LANG = -std=gnu++1z $(if $(cxxRTTI),,-fno-rtti) $(if $(cxxExceptions),,-fno-exceptions) \
 $(if $(cxxThreadSafeStatics),,-fno-threadsafe-statics)
 
 ifeq ($(ENV), android) # exceptions off by default on Android if using toolchain patches
@@ -16,7 +16,7 @@ endif
 
 # setup warnings
 
-CFLAGS_WARN ?= -Wall -Wextra -Wno-comment -Wno-missing-field-initializers -Wno-unused -Wno-unused-parameter
+CFLAGS_WARN ?= -Wall -Wextra -Werror=return-type -Wno-comment -Wno-missing-field-initializers -Wno-unused -Wno-unused-parameter
 CFLAGS_WARN += $(CFLAGS_WARN_EXTRA)
 CXXFLAGS_WARN ?= $(CFLAGS_WARN) -Woverloaded-virtual
 
@@ -57,3 +57,14 @@ AS = $(CC) -c
 ifdef CHOST
  CHOST_PREFIX := $(CHOST)-
 endif
+
+ifndef RELEASE
+ ifndef compiler_noSanitizeAddress
+  CFLAGS_CODEGEN += -fsanitize=address -fno-omit-frame-pointer
+  LDFLAGS_SYSTEM += -fsanitize=address
+  # Disable debug section compression since it may prevent symbols from appearing in backtrace
+  COMPRESS_DEBUG_SECTIONS = none
+ endif
+endif
+
+COMPRESS_DEBUG_SECTIONS ?= zlib

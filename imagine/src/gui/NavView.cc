@@ -14,49 +14,87 @@
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <imagine/gui/NavView.hh>
-#include <imagine/gui/View.hh>
+#include <imagine/gui/TableView.hh>
+#include <imagine/logger/logger.h>
 
-void NavView::init(ResourceFace *face)
+NavView::NavView(Gfx::GlyphTextureSet *face):
+	text{"", face}
 {
 	text.setFace(face);
-	leftBtnActive = rightBtnActive = true;
-	hasBackBtn = hasCloseBtn = false;
 }
 
-void NavView::inputEvent(Input::Event e)
+void NavView::setOnPushLeftBtn(OnPushDelegate del)
+{
+	onPushLeftBtn_ = del;
+}
+
+void NavView::setOnPushRightBtn(OnPushDelegate del)
+{
+	onPushRightBtn_ = del;
+}
+
+void NavView::setOnPushMiddleBtn(OnPushDelegate del)
+{
+	onPushMiddleBtn_ = del;
+}
+
+bool NavView::inputEvent(Input::Event e)
 {
 	assert(e.isPointer());
-	if(e.state == Input::PUSHED)
+	if(e.state() == Input::PUSHED)
 	{
-		if(hasCloseBtn && rightBtnActive && rightBtn.overlaps({e.x, e.y}))
+		if(hasCloseBtn && rightBtn.overlaps(e.pos()))
 		{
-			onRightNavBtn(e);
+			onPushRightBtn_.callCopySafe(e);
+			return true;
 		}
-		else if(hasBackBtn && leftBtnActive && leftBtn.overlaps({e.x, e.y}))
+		else if(hasBackBtn && leftBtn.overlaps(e.pos()))
 		{
-			onLeftNavBtn(e);
+			onPushLeftBtn_.callCopySafe(e);
+			return true;
+		}
+		else
+		{
+			auto centerBtnRect = textRect +
+				IG::WindowRect{textRect.xSize() / 4, 0, -textRect.xSize() / 4, -textRect.ySize() / 8};
+			if(centerBtnRect.overlaps(e.pos()))
+			{
+				onPushMiddleBtn_.callCopySafe(e);
+				return true;
+			}
 		}
 	}
+	return false;
 }
 
-void NavView::place(const Gfx::ProjectionPlane &projP)
+void NavView::place(Gfx::Renderer &r, const Gfx::ProjectionPlane &projP)
 {
-	text.compile(projP);
+	text.compile(r, projP);
 	//logMsg("setting textRect");
-	textRect.setPosRel(viewRect.pos(LT2DO), viewRect.size(), LT2DO);
-	leftBtn.setPosRel(viewRect.pos(LT2DO), viewRect.ySize(), LT2DO);
+	textRect.setPosRel(viewRect_.pos(LT2DO), viewRect_.size(), LT2DO);
+	leftBtn.setPosRel(viewRect_.pos(LT2DO), viewRect_.ySize(), LT2DO);
 	if(hasBackBtn)
 		textRect.x += leftBtn.xSize();
-	rightBtn.setPosRel(viewRect.pos(RT2DO), viewRect.ySize(), RT2DO);
+	rightBtn.setPosRel(viewRect_.pos(RT2DO), viewRect_.ySize(), RT2DO);
 	if(hasCloseBtn)
 		textRect.x2 -= rightBtn.xSize();
 }
 
+IG::WindowRect &NavView::viewRect()
+{
+	return viewRect_;
+}
+
+Gfx::GlyphTextureSet *NavView::titleFace()
+{
+	return text.face;
+}
+
 // BasicNavView
 
-void BasicNavView::init(ResourceFace *face, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes)
+BasicNavView::BasicNavView(Gfx::Renderer &r, Gfx::GlyphTextureSet *face, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes):
+	NavView{face}
 {
-	NavView::init(face);
 	leftSpr.init({-.5, -.5, .5, .5});
 	rightSpr.init({-.5, -.5, .5, .5});
 	bool compiled = false;
@@ -64,23 +102,23 @@ void BasicNavView::init(ResourceFace *face, Gfx::PixmapTexture *backRes, Gfx::Pi
 	{
 		leftSpr.setImg(*backRes);
 		compiled |= backRes->compileDefaultProgram(Gfx::IMG_MODE_MODULATE);
-		hasBackBtn = 1;
+		hasBackBtn = true;
 	}
 	if(closeRes)
 	{
 		rightSpr.setImg(*closeRes);
 		compiled |= closeRes->compileDefaultProgram(Gfx::IMG_MODE_MODULATE);
-		hasCloseBtn = 1;
+		hasCloseBtn = true;
 	}
 	if(compiled)
-		Gfx::autoReleaseShaderCompiler();
+		r.autoReleaseShaderCompiler();
 }
 
-void BasicNavView::setBackImage(Gfx::PixmapTexture *img)
+void BasicNavView::setBackImage(Gfx::Renderer &r, Gfx::PixmapTexture *img)
 {
 	leftSpr.setImg(img);
 	if(leftSpr.compileDefaultProgram(Gfx::IMG_MODE_MODULATE))
-		Gfx::autoReleaseShaderCompiler();
+		r.autoReleaseShaderCompiler();
 	hasBackBtn = leftSpr.image();
 }
 
@@ -91,64 +129,83 @@ void BasicNavView::setBackgroundGradient(const Gfx::LGradientStopDesc *gradStop,
 	bg.setPos(gradientStops.get(), gradStops, {});
 }
 
-void BasicNavView::draw(const Base::Window &win, const Gfx::ProjectionPlane &projP)
+void BasicNavView::draw(Gfx::Renderer &r, const Base::Window &win, const Gfx::ProjectionPlane &projP)
 {
 	using namespace Gfx;
 	if(bg)
 	{
-		setBlendMode(0);
-		noTexProgram.use(projP.makeTranslate());
-		bg.draw();
+		r.setBlendMode(0);
+		r.noTexProgram.use(r, projP.makeTranslate());
+		bg.draw(r);
 	}
-	setColor(COLOR_WHITE);
-	texAlphaReplaceProgram.use();
-	//text.draw(unproject(viewRect, C2DO), C2DO);
-	text.draw(projP.unProjectRect(viewRect).pos(C2DO), C2DO, projP);
-	if(leftSpr.image())
+	r.setColor(COLOR_WHITE);
+	r.texAlphaReplaceProgram.use(r);
+	if(centerTitle)
 	{
-		/*setBlendMode(BLEND_MODE_OFF);
-		resetTransforms();
-		setColor(.5, .5, .5, 1.);
-		GeomRect::draw(leftBtn);*/
-		if(leftBtnActive)
+		text.draw(r, projP.alignToPixel(projP.unProjectRect(viewRect_).pos(C2DO)), C2DO, projP);
+	}
+	else
+	{
+		if(text.xSize > projP.unprojectXSize(textRect) - TableView::globalXIndent*2)
 		{
-			setBlendMode(BLEND_MODE_ALPHA);
-			TextureSampler::bindDefaultNearestMipClampSampler();
-			leftSpr.useDefaultProgram(IMG_MODE_MODULATE, projP.makeTranslate(projP.unProjectRect(leftBtn).pos(C2DO)));
-			leftSpr.draw();
+			r.setClipRectBounds(win, textRect);
+			r.setClipRect(true);
+			text.draw(r, projP.alignToPixel(projP.unProjectRect(textRect).pos(RC2DO) - GP{TableView::globalXIndent, 0}), RC2DO, projP);
+			r.setClipRect(false);
+		}
+		else
+		{
+			text.draw(r, projP.alignToPixel(projP.unProjectRect(textRect).pos(LC2DO) + GP{TableView::globalXIndent, 0}), LC2DO, projP);
 		}
 	}
-	if(rightSpr.image())
+	if(hasBackBtn)
 	{
-		/*setBlendMode(BLEND_MODE_OFF);
-		resetTransforms();
-		setColor(.5, .5, .5, 1.);
-		GeomRect::draw(rightBtn);*/
-		if(rightBtnActive)
-		{
-			setBlendMode(BLEND_MODE_ALPHA);
-			TextureSampler::bindDefaultNearestMipClampSampler();
-			rightSpr.useDefaultProgram(IMG_MODE_MODULATE, projP.makeTranslate(projP.unProjectRect(rightBtn).pos(C2DO)));
-			rightSpr.draw();
-		}
+		assumeExpr(leftSpr.image());
+		r.setColor(COLOR_WHITE);
+		r.setBlendMode(BLEND_MODE_ALPHA);
+		TextureSampler::bindDefaultNearestMipClampSampler(r);
+		auto trans = projP.makeTranslate(projP.unProjectRect(leftBtn).pos(C2DO));
+		if(rotateLeftBtn)
+			trans = trans.rollRotate(angleFromDegree(90));
+		leftSpr.useDefaultProgram(IMG_MODE_MODULATE, trans);
+		leftSpr.draw(r);
+	}
+	if(hasCloseBtn)
+	{
+		assumeExpr(rightSpr.image());
+		r.setColor(COLOR_WHITE);
+		r.setBlendMode(BLEND_MODE_ALPHA);
+		TextureSampler::bindDefaultNearestMipClampSampler(r);
+		rightSpr.useDefaultProgram(IMG_MODE_MODULATE, projP.makeTranslate(projP.unProjectRect(rightBtn).pos(C2DO)));
+		rightSpr.draw(r);
 	}
 }
 
-void BasicNavView::place(const Gfx::ProjectionPlane &projP)
+void BasicNavView::place(Gfx::Renderer &r, const Gfx::ProjectionPlane &projP)
 {
 	using namespace Gfx;
-	NavView::place(projP);
-	if(hasBackBtn)
+	NavView::place(r, projP);
+	if(leftSpr.image())
 	{
 		auto rect = projP.unProjectRect(leftBtn);
 		Gfx::GCRect scaledRect{-rect.xSize() / 3_gc, -rect.ySize() / 3_gc, rect.xSize() / 3_gc, rect.ySize() / 3_gc};
 		leftSpr.setPos(scaledRect);
 	}
-	if(hasCloseBtn)
+	if(rightSpr.image())
 	{
 		auto rect = projP.unProjectRect(rightBtn);
 		Gfx::GCRect scaledRect{-rect.xSize() / 3_gc, -rect.ySize() / 3_gc, rect.xSize() / 3_gc, rect.ySize() / 3_gc};
 		rightSpr.setPos(scaledRect);
 	}
-	bg.setPos(gradientStops.get(), bg.stops(), projP.unProjectRect(viewRect));
+	bg.setPos(gradientStops.get(), bg.stops(), projP.unProjectRect(viewRect_));
+}
+
+void BasicNavView::showLeftBtn(bool show)
+{
+	hasBackBtn = show && leftSpr.image();
+}
+
+void BasicNavView::showRightBtn(bool show)
+{
+	hasCloseBtn = show && rightSpr.image();
 }

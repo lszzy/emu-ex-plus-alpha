@@ -28,35 +28,41 @@
 class NavView
 {
 public:
+	using OnPushDelegate = DelegateFunc<void (Input::Event e)>;
+
+	NavView(Gfx::GlyphTextureSet *face);
+	virtual ~NavView() {}
+	void setOnPushLeftBtn(OnPushDelegate del);
+	void setOnPushRightBtn(OnPushDelegate del);
+	void setOnPushMiddleBtn(OnPushDelegate del);
+	void setTitle(const char *title) { text.setString(title); }
+	virtual void place(Gfx::Renderer &r, const Gfx::ProjectionPlane &projP);
+	bool inputEvent(Input::Event e);
+	virtual void draw(Gfx::Renderer &r, const Base::Window &win, const Gfx::ProjectionPlane &projP) = 0;
+	virtual void showLeftBtn(bool show) = 0;
+	virtual void showRightBtn(bool show) = 0;
+	IG::WindowRect &viewRect();
+	Gfx::GlyphTextureSet *titleFace();
+
+protected:
 	IG::WindowRect leftBtn{}, rightBtn{}, textRect{};
 	Gfx::Text text{};
-	IG::WindowRect viewRect{};
-	bool hasBackBtn = false, leftBtnActive = false, hasCloseBtn = false, rightBtnActive = false;
-
-	NavView() {}
-	virtual ~NavView() {}
-	virtual void onLeftNavBtn(Input::Event e) {};
-	virtual void onRightNavBtn(Input::Event e) {};
-	void setLeftBtnActive(bool on) { leftBtnActive = on; }
-	void setRightBtnActive(bool on) { rightBtnActive = on; }
-	void setTitle(const char *title) { text.setString(title); }
-	void init(ResourceFace *face);
-	void deinitText();
-	virtual void place(const Gfx::ProjectionPlane &projP);
-	void inputEvent(Input::Event e);
-	virtual void draw(const Base::Window &win, const Gfx::ProjectionPlane &projP) = 0;
+	IG::WindowRect viewRect_{};
+	OnPushDelegate onPushLeftBtn_{};
+	OnPushDelegate onPushRightBtn_{};
+	OnPushDelegate onPushMiddleBtn_{};
+	bool hasBackBtn = false;
+	bool hasCloseBtn = false;
 };
 
 class BasicNavView : public NavView
 {
 public:
-	Gfx::Sprite leftSpr{}, rightSpr{};
-	Gfx::LGradient bg{};
-	std::unique_ptr<Gfx::LGradientStopDesc[]> gradientStops{};
+	bool centerTitle = true;
+	bool rotateLeftBtn = false;
 
-	BasicNavView() {}
-	void init(ResourceFace *face, Gfx::PixmapTexture *leftRes, Gfx::PixmapTexture *rightRes);
-	void setBackImage(Gfx::PixmapTexture *img);
+	BasicNavView(Gfx::Renderer &r, Gfx::GlyphTextureSet *face, Gfx::PixmapTexture *leftRes, Gfx::PixmapTexture *rightRes);
+	void setBackImage(Gfx::Renderer &r, Gfx::PixmapTexture *img);
 	void setBackgroundGradient(const Gfx::LGradientStopDesc *gradStop, uint gradStops);
 
 	template <size_t S>
@@ -65,6 +71,13 @@ public:
 		setBackgroundGradient(gradStop, S);
 	}
 
-	void draw(const Base::Window &win, const Gfx::ProjectionPlane &projP) override;
-	void place(const Gfx::ProjectionPlane &projP) override;
+	void draw(Gfx::Renderer &r, const Base::Window &win, const Gfx::ProjectionPlane &projP) override;
+	void place(Gfx::Renderer &r, const Gfx::ProjectionPlane &projP) override;
+	void showLeftBtn(bool show) override;
+	void showRightBtn(bool show) override;
+
+protected:
+	Gfx::Sprite leftSpr{}, rightSpr{};
+	Gfx::LGradient bg{};
+	std::unique_ptr<Gfx::LGradientStopDesc[]> gradientStops{};
 };

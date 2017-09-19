@@ -16,12 +16,9 @@
 static_assert(__has_feature(objc_arc), "This file requires ARC");
 #define LOGTAG "Base"
 #import "MainApp.hh"
-#import <imagine/base/iphone/EAGLView.hh>
 #import <dlfcn.h>
 #import <unistd.h>
-#import <OpenGLES/ES2/gl.h> // for glFinish()
 #include <imagine/base/Base.hh>
-#include <imagine/base/GLContext.hh>
 #include <imagine/logger/logger.h>
 #include <imagine/util/algorithm.h>
 #include "private.hh"
@@ -137,7 +134,7 @@ static Screen &setupUIScreen(UIScreen *screen, bool setOverscanCompensation)
 	using namespace Input;
 	logMsg("editing ended");
 	//inVKeyboard = 0;
-	auto delegate = moveAndClear(vKeyboardTextDelegate);
+	auto delegate = IG::moveAndClear(vKeyboardTextDelegate);
 	char text[256];
 	string_copy(text, [textField.text UTF8String]);
 	[textField removeFromSuperview];
@@ -297,7 +294,7 @@ static uint iOSOrientationToGfx(UIDeviceOrientation orientation)
 	// TODO: use NSProcessInfo
 	onInit(0, nullptr);
 	if(!deviceWindow())
-		bug_exit("no main window created");
+		bug_unreachable("no main window created");
 	logMsg("exiting didFinishLaunchingWithOptions");
 	return YES;
 }
@@ -340,13 +337,6 @@ static uint iOSOrientationToGfx(UIDeviceOrientation orientation)
 	dispatchOnExit(true);
 	Base::Screen::setActiveAll(false);
 	Input::deinitKeyRepeatTimer();
-	iterateTimes(Window::windows(), i)
-	{
-		[Window::window(i)->glView() deleteDrawable];
-	}
-	GLContext::setDrawable(nullptr);
-	onGLDrawableChanged.callCopySafe(nullptr);
-	glFinish();
 	logMsg("entered background");
 }
 
@@ -626,6 +616,14 @@ void addLauncherIcon(const char *name, const char *path) {}
 bool hasVibrator() { return false; }
 
 void vibrate(uint ms) {}
+
+void exitWithErrorMessageVPrintf(int exitVal, const char *format, va_list args)
+{
+	std::array<char, 512> msg{};
+	auto result = vsnprintf(msg.data(), msg.size(), format, args);
+	logErr("%s", msg.data());
+	exit(exitVal);
+}
 
 #ifdef CONFIG_BASE_IOS_SETUID
 

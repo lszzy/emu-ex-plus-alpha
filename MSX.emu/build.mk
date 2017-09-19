@@ -7,11 +7,14 @@ CFLAGS_OPTIMIZE_LEVEL_RELEASE_DEFAULT = -O3
 include $(IMAGINE_PATH)/make/imagineAppBase.mk
 
 SRC += main/Main.cc \
+main/options.cc \
+main/input.cc \
 main/EmuControls.cc \
 main/EmuMenuViews.cc \
 main/BlueMSXApi.cc \
 main/Board.cc \
-main/ziphelper.cc
+main/ziphelper.cc \
+main/RomLoader.cc
 
 BMSX := blueMSX
 
@@ -129,7 +132,6 @@ $(BMSX)/Board/Coleco.c
 # $(BMSX)/Memory/SlotManager.c
 SRC += $(BMSX)/Memory/ram1kBMirrored.c \
 $(BMSX)/Memory/ramNormal.c \
-$(BMSX)/Memory/RomLoader.c \
 $(BMSX)/Debugger/DebugDeviceManager.c \
 $(BMSX)/Memory/DeviceManager.c \
 $(BMSX)/Memory/ramMapper.c \

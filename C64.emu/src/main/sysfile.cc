@@ -91,8 +91,8 @@ static int loadSysFile(IO &file, const char *name, BYTE *dest, int minsize, int 
 
 static ArchiveIO archiveIOForSysFile(const char *archivePath, const char *sysFileName, char **complete_path_return)
 {
-	CallResult res = OK;
-	for(auto &entry : FS::ArchiveIterator{archivePath, res})
+	std::error_code ec{};
+	for(auto &entry : FS::ArchiveIterator{archivePath, ec})
 	{
 		if(entry.type() == FS::file_type::directory)
 		{
@@ -112,7 +112,7 @@ static ArchiveIO archiveIOForSysFile(const char *archivePath, const char *sysFil
 		}
 		return entry.moveIO();
 	}
-	if(res != OK)
+	if(ec)
 	{
 		logErr("error opening archive:%s", archivePath);
 	}
@@ -136,13 +136,13 @@ CLINK FILE *sysfile_open(const char *name, char **complete_path_return, const ch
 	{
 		if(!strlen(basePath.data()) || !FS::exists(basePath))
 			continue;
-		if(hasArchiveExtension(basePath.data()))
+		if(EmuApp::hasArchiveExtension(basePath.data()))
 		{
 			auto io = archiveIOForSysFile(basePath.data(), name, complete_path_return);
 			if(!io)
 				continue;
 			// Uncompress file into memory and wrap in FILE
-			return GenericIO{io.moveToMapIO()}.moveToFileStream(open_mode);
+			return io.moveToMapIO().makeGeneric().moveToFileStream(open_mode);
 		}
 		else
 		{
@@ -172,7 +172,7 @@ CLINK int sysfile_locate(const char *name, char **complete_path_return)
 	{
 		if(!strlen(basePath.data()) || !FS::exists(basePath))
 			continue;
-		if(hasArchiveExtension(basePath.data()))
+		if(EmuApp::hasArchiveExtension(basePath.data()))
 		{
 			// TODO
 			continue;
@@ -209,7 +209,7 @@ CLINK int sysfile_load(const char *name, BYTE *dest, int minsize, int maxsize)
 	{
 		if(!strlen(basePath.data()) || !FS::exists(basePath))
 			continue;
-		if(hasArchiveExtension(basePath.data()))
+		if(EmuApp::hasArchiveExtension(basePath.data()))
 		{
 			auto io = archiveIOForSysFile(basePath.data(), name, nullptr);
 			if(!io)
@@ -228,7 +228,7 @@ CLINK int sysfile_load(const char *name, BYTE *dest, int minsize, int maxsize)
 			{
 				auto fullPath = FS::makePathStringPrintf("%s/%s/%s", basePath.data(), subDir, name);
 				FileIO file;
-				file.open(fullPath.data());
+				file.open(fullPath.data(), IO::AccessHint::ALL);
 				if(!file)
 					continue;
 				//logMsg("loading system file: %s", complete_path);

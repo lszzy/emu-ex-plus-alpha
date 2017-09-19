@@ -20,9 +20,7 @@
 #include <imagine/bluetooth/sys.hh>
 #include <imagine/gui/View.hh>
 #include <imagine/util/2DOrigin.h>
-#include <emuframework/VideoImageOverlay.hh>
-#include <emuframework/EmuSystem.hh>
-#include <emuframework/Recent.hh>
+#include <imagine/util/string.h>
 #include <imagine/audio/Audio.hh>
 #include <imagine/logger/logger.h>
 
@@ -117,9 +115,9 @@ public:
 	bool writeToIO(IO &io)
 	{
 		logMsg("writing option key %u after size %u", KEY, ioSize());
-		CallResult r = OK;
-		io.writeVal(KEY, &r);
-		io.writeVal((SERIALIZED_T)V::get(), &r);
+		std::error_code ec{};
+		io.writeVal(KEY, &ec);
+		io.writeVal((SERIALIZED_T)V::get(), &ec);
 		return true;
 	}
 
@@ -127,8 +125,8 @@ public:
 	{
 		if(!isDefault())
 		{
-			CallResult r = OK;
-			io.writeVal((uint16)ioSize(), &r);
+			std::error_code ec{};
+			io.writeVal((uint16)ioSize(), &ec);
 			writeToIO(io);
 		}
 		return true;
@@ -145,9 +143,9 @@ public:
 			return false;
 		}
 
-		CallResult r = OK;
-		auto x = io.readVal<SERIALIZED_T>(&r);
-		if(r != OK)
+		std::error_code ec{};
+		auto x = io.readVal<SERIALIZED_T>(&ec);
+		if(ec)
 		{
 			logErr("error reading option from io");
 			return false;
@@ -198,10 +196,10 @@ struct PathOption : public OptionBase
 			logMsg("skipping 0 length option string");
 			return 0;
 		}
-		CallResult r = OK;
-		io.writeVal((uint16)(2 + len), &r);
-		io.writeVal((uint16)KEY, &r);
-		io.write(val, len, &r);
+		std::error_code ec{};
+		io.writeVal((uint16)(2 + len), &ec);
+		io.writeVal((uint16)KEY, &ec);
+		io.write(val, len, &ec);
 		return true;
 	}
 
@@ -238,8 +236,8 @@ using Byte4Option = Option<OptionMethodVar<uint32>, uint32>;
 using Byte4s1Option = Option<OptionMethodVar<uint32>, uint8>;
 using DoubleOption = Option<OptionMethodVar<double>, double>;
 
-using OptionBackNavigation = Option<OptionMethodRef<template_ntype(View::needsBackControl)>, uint8>;
-using OptionSwappedGamepadConfirm = Option<OptionMethodRef<bool, Input::swappedGamepadConfirm>, uint8>;
+using OptionBackNavigation = Option<OptionMethodRef<bool, View::needsBackControl>, uint8>;
+using OptionSwappedGamepadConfirm = Option<OptionMethodFunc<bool, Input::swappedGamepadConfirm, Input::setSwappedGamepadConfirm>, uint8>;
 
 bool vControllerUseScaledCoordinates();
 void setVControllerUseScaledCoordinates(bool on);
@@ -307,11 +305,11 @@ struct OptionAspectRatio : public Option<OptionMethodVar<IG::Point2D<uint> > >
 
 	bool writeToIO(IO &io)
 	{
-		CallResult r = OK;
-		io.writeVal((uint16)CFGKEY_GAME_ASPECT_RATIO, &r);
+		std::error_code ec{};
+		io.writeVal((uint16)CFGKEY_GAME_ASPECT_RATIO, &ec);
 		logMsg("writing aspect ratio config %u:%u", val.x, val.y);
-		io.writeVal((uint8)val.x, &r);
-		io.writeVal((uint8)val.y, &r);
+		io.writeVal((uint8)val.x, &ec);
+		io.writeVal((uint8)val.y, &ec);
 		return true;
 	}
 
@@ -335,43 +333,32 @@ struct OptionAspectRatio : public Option<OptionMethodVar<IG::Point2D<uint> > >
 
 struct OptionRecentGames : public OptionBase
 {
-	bool isDefault() const { return recentGameList.size() == 0; }
 	const uint16 key = CFGKEY_RECENT_GAMES;
 
-	bool writeToIO(IO &io)
-	{
-		logMsg("writing recent list");
-		CallResult r = OK;
-		io.writeVal(key, &r);
-		for(auto &e : recentGameList)
-		{
-			uint len = strlen(e.path.data());
-			io.writeVal((uint16)len, &r);
-			io.write(e.path.data(), len, &r);
-		}
-		return true;
-	}
-
+	bool isDefault() const;
+	bool writeToIO(IO &io);
 	bool readFromIO(IO &io, uint readSize_);
-
-	uint ioSize()
-	{
-		uint strSizes = 0;
-		for(auto &e : recentGameList)
-		{
-			strSizes += 2;
-			strSizes += strlen(e.path.data());
-		}
-		return sizeof(key) + strSizes;
-	}
+	uint ioSize();
 };
 
 struct OptionVControllerLayoutPosition : public OptionBase
 {
 	const uint16 key = CFGKEY_VCONTROLLER_LAYOUT_POS;
 
-	bool isDefault() const override;
-	bool writeToIO(IO &io) override;
+	bool isDefault() const final;
+	bool writeToIO(IO &io) final;
 	bool readFromIO(IO &io, uint readSize_);
-	uint ioSize() override;
+	uint ioSize() final;
 };
+
+template<int MAX, class T>
+bool optionIsValidWithMax(T val)
+{
+	return val <= MAX;
+}
+
+template<int MIN, int MAX, class T>
+bool optionIsValidWithMinMax(T val)
+{
+	return val >= MIN && val <= MAX;
+}

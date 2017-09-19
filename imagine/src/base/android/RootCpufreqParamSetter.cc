@@ -17,7 +17,7 @@
 #include <imagine/base/android/RootCpufreqParamSetter.hh>
 #include <imagine/io/PosixIO.hh>
 #include <imagine/logger/logger.h>
-#include <imagine/util/assume.h>
+#include <imagine/util/utility.h>
 #include <cstdlib>
 #include <array>
 
@@ -29,7 +29,7 @@
 static int readIntFileValue(const char *path)
 {
 	PosixIO f;
-	if(f.open(path) != OK)
+	if(f.open(path))
 		return -1;
 	std::array<char, 32> buff{};
 	f.readAtPos(buff.data(), sizeof(buff)-1, 0);

@@ -12,7 +12,7 @@ Screenshot.cc \
 ButtonConfigView.cc \
 VideoImageOverlay.cc \
 StateSlotView.cc \
-MenuView.cc \
+EmuMainMenuView.cc \
 EmuInput.cc \
 EmuOptions.cc \
 OptionView.cc \
@@ -27,7 +27,9 @@ EmuVideo.cc \
 EmuInputView.cc \
 EmuVideoLayer.cc \
 Cheats.cc \
-Recent.cc
+Recent.cc \
+EmuLoadProgressView.cc \
+RecentGameView.cc
 
 ifeq ($(emuFramework_onScreenControls), 1)
  SRC += TouchConfigView.cc \

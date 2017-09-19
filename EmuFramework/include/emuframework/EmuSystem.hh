@@ -25,6 +25,9 @@
 #include <imagine/gui/View.hh>
 #include <imagine/util/audio/PcmFormat.hh>
 #include <imagine/util/string.h>
+#include <stdexcept>
+#include <experimental/optional>
+#include <emuframework/EmuVideo.hh>
 
 #ifdef ENV_NOTE
 #define PLATFORM_INFO_STR ENV_NOTE " (" CONFIG_ARCH_STR ")"
@@ -32,6 +35,14 @@
 #define PLATFORM_INFO_STR "(" CONFIG_ARCH_STR ")"
 #endif
 #define CREDITS_INFO_STRING "Built : " __DATE__ "\n" PLATFORM_INFO_STR "\n\n"
+
+#if (defined __ANDROID__ && !defined CONFIG_MACHINE_OUYA) || \
+	defined CONFIG_BASE_IOS || \
+	(defined CONFIG_BASE_X11 && !defined CONFIG_MACHINE_PANDORA)
+#define CONFIG_VCONTROLS_GAMEPAD
+#endif
+
+class EmuInputView;
 
 struct AspectRatioInfo
 {
@@ -48,8 +59,6 @@ struct BundledGameInfo
 	const char *assetName;
 };
 
-class EmuNavView;
-
 enum { STATE_RESULT_OK, STATE_RESULT_NO_FILE, STATE_RESULT_NO_FILE_ACCESS, STATE_RESULT_IO_ERROR,
 	STATE_RESULT_INVALID_DATA, STATE_RESULT_OTHER_ERROR };
 
@@ -57,7 +66,7 @@ class EmuSystem
 {
 private:
 	static FS::PathString gamePath_, fullGamePath_;
-	static FS::FileString gameName_, fullGameName_;
+	static FS::FileString gameName_, fullGameName_, originalGameName_;
 	static FS::PathString defaultSavePath_;
 	static FS::PathString gameSavePath_;
 
@@ -69,17 +78,30 @@ public:
 		PAUSED,
 		ACTIVE
 	};
-	enum class ViewID
+
+	enum class LoadProgress : uint8
 	{
-		MAIN_MENU,
-		VIDEO_OPTIONS,
-		AUDIO_OPTIONS,
-		INPUT_OPTIONS,
-		SYSTEM_OPTIONS,
-		GUI_OPTIONS,
-		EDIT_CHEATS,
-		LIST_CHEATS,
+		UNSET,
+		FAILED,
+		OK,
+		SET,
+		UPDATE
 	};
+
+	struct LoadProgressMessage
+	{
+		constexpr LoadProgressMessage() {}
+		constexpr LoadProgressMessage(LoadProgress progress, int intArg, int intArg2, int intArg3):
+			intArg{intArg}, intArg2{intArg2}, intArg3{intArg3}, progress{progress} {}
+		int intArg{};
+		int intArg2{};
+		int intArg3{};
+		LoadProgress progress{LoadProgress::UNSET};
+	};
+
+	using OnLoadProgressDelegate = DelegateFunc<bool(int pos, int max, const char *label)>;
+
+	using Error = std::experimental::optional<std::runtime_error>;
 	using NameFilterFunc = bool(*)(const char *name);
 	static State state;
 	static FS::PathString savePath_;
@@ -103,6 +125,7 @@ public:
 	static const bool inputHasTriggerBtns;
 	static const bool inputHasRevBtnLayout;
 	static bool inputHasKeyboard;
+	static bool inputHasOptionsView;
 	static bool hasBundledGames;
 	static bool hasPALVideoSystem;
 	enum VideoSystem { VIDSYS_NATIVE_NTSC, VIDSYS_PAL };
@@ -113,21 +136,21 @@ public:
 	static bool handlesArchiveFiles;
 	static bool handlesGenericIO;
 	static bool hasCheats;
+	static bool hasSound;
+	static int forcedSoundRate;
+	static bool constFrameRate;
 	static NameFilterFunc defaultFsFilter;
 	static NameFilterFunc defaultBenchmarkFsFilter;
 	static const char *creditsViewStr;
 
-	static CallResult onInit();
-	static void onMainWindowCreated(Base::Window &win);
-	static void onCustomizeNavView(EmuNavView &view);
-	static View *makeView(Base::Window &win, ViewID id);
+	static Error onInit();
 	static bool isActive() { return state == State::ACTIVE; }
 	static bool isStarted() { return state == State::ACTIVE || state == State::PAUSED; }
 	static bool isPaused() { return state == State::PAUSED; }
 	static void cancelAutoSaveStateTimer();
 	static void startAutoSaveStateTimer();
-	static int loadState(int slot = saveStateSlot);
-	static int saveState();
+	static Error loadState(const char *path);
+	static Error saveState(const char *path);
 	static bool stateExists(int slot);
 	static bool shouldOverwriteExistingState();
 	static const char *systemName();
@@ -137,29 +160,35 @@ public:
 	static const char *fullGamePath() { return fullGamePath_.data(); }
 	static FS::FileString gameName() { return gameName_; }
 	static FS::FileString fullGameName() { return strlen(fullGameName_.data()) ? fullGameName_ : gameName_; }
+	static FS::FileString gameFileName() { return FS::basename(fullGamePath_); }
+	static FS::FileString originalGameFileName() { return strlen(originalGameName_.data()) ? originalGameName_ : gameFileName(); }
 	static void setFullGameName(const char *name) { string_copy(fullGameName_, name); }
+	static FS::FileString fullGameNameForPathDefaultImpl(const char *path);
+	static FS::FileString fullGameNameForPath(const char *path);
+	static FS::PathString baseSavePath();
 	static void makeDefaultSavePath();
 	static const char *defaultSavePath();
 	static const char *savePath();
 	static FS::PathString sprintStateFilename(int slot,
 		const char *statePath = savePath(), const char *gameName = EmuSystem::gameName_.data());
-	static bool loadAutoState();
-	static void saveAutoState();
+	static char saveSlotChar(int slot);
+	static char saveSlotCharUpper(int slot);
 	static void saveBackupMem();
 	static void savePathChanged();
 	static void reset(ResetMode mode);
 	static void initOptions();
-	static void onOptionsLoaded();
+	static Error onOptionsLoaded();
 	static void writeConfig(IO &io);
 	static bool readConfig(IO &io, uint key, uint readSize);
-	static int loadGame(const char *path);
-	static int loadGameFromIO(IO &io, const char *path, const char *origFilename);
+	static void createWithMedia(GenericIO io, const char *path, const char *name,
+		Error &err, OnLoadProgressDelegate onLoadProgress);
+	static Error loadGame(IO &io, OnLoadProgressDelegate onLoadProgress);
 	static FS::PathString willLoadGameFromPath(FS::PathString path);
-	static int loadGameFromPath(FS::PathString path);
-	typedef DelegateFunc<void (uint result, Input::Event e)> LoadGameCompleteDelegate;
-	static LoadGameCompleteDelegate loadGameCompleteDel;
-	static LoadGameCompleteDelegate &onLoadGameComplete() { return loadGameCompleteDel; }
-	[[gnu::hot]] static void runFrame(bool renderGfx, bool processGfx, bool renderAudio);
+	static Error loadGameFromPath(const char *path, OnLoadProgressDelegate onLoadProgress);
+	static Error loadGameFromFile(GenericIO io, const char *name, OnLoadProgressDelegate onLoadProgress);
+	[[gnu::hot]] static void runFrame(EmuVideo *video, bool renderAudio);
+	static void skipFrames(uint frames);
+	static void onPrepareVideo(EmuVideo &video);
 	static bool vidSysIsPAL();
 	static double frameTime();
 	static double frameTime(VideoSystem system);
@@ -168,10 +197,10 @@ public:
 	static bool setFrameTime(VideoSystem system, double time);
 	static uint multiresVideoBaseX();
 	static uint multiresVideoBaseY();
-	static void configAudioRate(double frameTime);
+	static void configAudioRate(double frameTime, int rate);
 	static void configAudioPlayback();
 	static void configFrameTime();
-	static void clearInputBuffers();
+	static void clearInputBuffers(EmuInputView &view);
 	static void handleInputAction(uint state, uint emuKey);
 	static uint translateInputAction(uint input, bool &turbo);
 	static uint translateInputAction(uint input)
@@ -179,11 +208,11 @@ public:
 		bool turbo;
 		return translateInputAction(input, turbo);
 	}
-	static bool hasInputOptions();
+	static bool touchControlsApplicable();
+	static bool handlePointerInputEvent(Input::Event e, IG::WindowRect gameRect);
 	static void stopSound();
 	static void startSound();
 	static void writeSound(const void *samples, uint framesToWrite);
-	static void commitSound(Audio::BufferContext buffer, uint frames);
 	static uint advanceFramesWithTime(Base::FrameTimeBase time);
 	static void setupGamePaths(const char *filePath);
 	static void setGameSavePath(const char *path);
@@ -196,23 +225,18 @@ public:
 		return !string_equal(gameName_.data(), "");
 	}
 	static void resetFrameTime();
+	static void prepareAudioVideo();
 	static void pause();
 	static void start();
 	static void closeSystem();
 	static void closeGame(bool allowAutosaveState = 1);
+	[[gnu::format(printf, 1, 2)]]
+	static Error makeError(const char *msg, ...);
+	static Error makeError(std::error_code ec);
+	static Error makeFileReadError();
+	static Error makeFileWriteError();
+	static Error makeBlankError();
 };
-
-static const char *stateResultToStr(int res)
-{
-	switch(res)
-	{
-		case STATE_RESULT_NO_FILE: return "No State Exists";
-		case STATE_RESULT_NO_FILE_ACCESS: return "File Permission Denied";
-		case STATE_RESULT_IO_ERROR: return "File I/O Error";
-		case STATE_RESULT_INVALID_DATA: return "Invalid State Data";
-		default: bug_branch("%d", res); return 0;
-	}
-}
 
 static const char *stateNameStr(int slot)
 {
@@ -227,4 +251,8 @@ static const char *stateNameStr(int slot)
 
 #if defined CONFIG_INPUT_KEYBOARD_DEVICES
 #define CONFIG_INPUT_ICADE
+#endif
+
+#if defined CONFIG_BASE_X11 || (defined CONFIG_BASE_ANDROID && !defined CONFIG_MACHINE_OUYA) || defined CONFIG_BASE_IOS
+#define EMU_FRAMEWORK_WINDOW_PIXEL_FORMAT_OPTION
 #endif

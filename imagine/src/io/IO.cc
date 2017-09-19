@@ -18,14 +18,18 @@
 #include <imagine/io/api/stdio.hh>
 #include <imagine/fs/FS.hh>
 #include <imagine/logger/logger.h>
+#include "IOUtils.hh"
+
+template class IOUtils<IO>;
+template class IOUtils<GenericIO>;
 
 IO::~IO() {}
 
-ssize_t IO::readAtPos(void *buff, size_t bytes, off_t offset, CallResult *resultOut)
+ssize_t IO::readAtPos(void *buff, size_t bytes, off_t offset, std::error_code *ecOut)
 {
 	auto savedOffset = tell();
 	seekS(offset);
-	auto bytesRead = read(buff, bytes, resultOut);
+	auto bytesRead = read(buff, bytes, ecOut);
 	seekS(savedOffset);
 	return bytesRead;
 }
@@ -108,14 +112,26 @@ FILE *GenericIO::moveToFileStream(const char *opentype)
 	return f;
 }
 
-ssize_t GenericIO::read(void *buff, size_t bytes, CallResult *resultOut)
+ssize_t GenericIO::read(void *buff, size_t bytes, std::error_code *ecOut)
 {
-	return io ? io->read(buff, bytes, resultOut) : (CallResult)BAD_STATE;
+	if(!io)
+	{
+		if(ecOut)
+			*ecOut = {EBADF, std::system_category()};
+		return -1;
+	}
+	return io->read(buff, bytes, ecOut);
 }
 
-ssize_t GenericIO::readAtPos(void *buff, size_t bytes, off_t offset, CallResult *resultOut)
+ssize_t GenericIO::readAtPos(void *buff, size_t bytes, off_t offset, std::error_code *ecOut)
 {
-	return io ? io->readAtPos(buff, bytes, offset, resultOut) : (CallResult)BAD_STATE;
+	if(!io)
+	{
+		if(ecOut)
+			*ecOut = {EBADF, std::system_category()};
+		return -1;
+	}
+	return io->readAtPos(buff, bytes, offset, ecOut);
 }
 
 const char *GenericIO::mmapConst()
@@ -123,26 +139,31 @@ const char *GenericIO::mmapConst()
 	return io ? io->mmapConst() : nullptr;
 }
 
-ssize_t GenericIO::write(const void *buff, size_t bytes, CallResult *resultOut)
+ssize_t GenericIO::write(const void *buff, size_t bytes, std::error_code *ecOut)
 {
-	return io ? io->write(buff, bytes, resultOut) : (CallResult)BAD_STATE;
-}
-
-CallResult GenericIO::truncate(off_t offset)
-{
-	return io ? io->truncate(offset) : (CallResult)BAD_STATE;
-}
-
-off_t GenericIO::seek(off_t offset, IO::SeekMode mode, CallResult *resultOut)
-{
-	if(io)
-		return io->seek(offset, mode, resultOut);
-	else
+	if(!io)
 	{
-		if(resultOut)
-			*resultOut = BAD_STATE;
+		if(ecOut)
+			*ecOut = {EBADF, std::system_category()};
 		return -1;
 	}
+	return io->write(buff, bytes, ecOut);
+}
+
+std::error_code GenericIO::truncate(off_t offset)
+{
+	return io ? io->truncate(offset) : std::error_code{EBADF, std::system_category()};
+}
+
+off_t GenericIO::seek(off_t offset, IO::SeekMode mode, std::error_code *ecOut)
+{
+	if(!io)
+	{
+		if(ecOut)
+			*ecOut = {EBADF, std::system_category()};
+		return -1;
+	}
+	return io->seek(offset, mode, ecOut);
 }
 
 void GenericIO::close()
@@ -178,44 +199,45 @@ GenericIO::operator bool()
 	return io && *io;
 }
 
-AssetIO openAppAssetIO(const char *name)
+AssetIO openAppAssetIO(const char *name, IO::AccessHint access)
 {
 	AssetIO io;
 	#ifdef __ANDROID__
-	io.open(name);
+	io.open(name, access);
 	#else
-	io.open(FS::makePathStringPrintf("%s/%s", Base::assetPath().data(), name).data());
+	io.open(FS::makePathStringPrintf("%s/%s", Base::assetPath().data(), name).data(), access);
 	#endif
 	return io;
 }
 
-CallResult writeToNewFile(const char *path, void *data, size_t size)
+std::error_code writeToNewFile(const char *path, void *data, size_t size)
 {
 	FileIO f;
-	auto r = f.create(path);
+	auto ec = f.create(path);
 	if(!f)
-		return r;
-	if(f.writeAll(data, size) != OK)
-		return WRITE_ERROR;
-	return OK;
+		return ec;
+	ec = f.writeAll(data, size);
+	if(ec)
+		return ec;
+	return {};
 }
 
 ssize_t readFromFile(const char *path, void *data, size_t size)
 {
 	FileIO f;
-	f.open(path);
+	f.open(path, IO::AccessHint::SEQUENTIAL);
 	if(!f)
 		return -1;
 	auto readSize = f.read(data, size);
 	return readSize;
 }
 
-CallResult writeIOToNewFile(IO &io, const char *path)
+std::error_code writeIOToNewFile(IO &io, const char *path)
 {
 	FileIO file;
-	auto r = file.create(path);
-	if(r != OK)
-		return r;
+	auto ec = file.create(path);
+	if(ec)
+		return ec;
 	return io.writeToIO(file);
 }
 

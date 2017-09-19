@@ -21,10 +21,10 @@
 #include <imagine/base/WindowConfig.hh>
 #include <imagine/pixmap/PixelFormat.hh>
 #include <imagine/util/rectangle2.h>
-#include <imagine/util/container/ArrayList.hh>
 #include <imagine/util/DelegateFunc.hh>
 #include <imagine/util/bits.h>
 #include <imagine/input/Input.hh>
+#include <system_error>
 
 namespace Base
 {
@@ -34,7 +34,7 @@ class Window : public WindowImpl
 public:
 	constexpr Window() {}
 
-	CallResult init(const WindowConfig &config);
+	std::error_code init(const WindowConfig &config);
 	void show();
 	void dismiss();
 	void setAcceptDnd(bool on);
@@ -49,6 +49,7 @@ public:
 	static uint windows();
 	static Window *window(uint idx);
 	static PixelFormat defaultPixelFormat();
+	NativeWindow nativeObject();
 
 	// Called when the state of the window's drawing surface changes,
 	// such as a re-size or if it becomes the current drawing target
@@ -146,7 +147,7 @@ public:
 	bool updatePhysicalSize(IG::Point2D<float> surfaceSizeMM, IG::Point2D<float> surfaceSizeSMM);
 	bool updatePhysicalSizeWithCurrentSize();
 	bool hasSurface();
-	void dispatchInputEvent(Input::Event event);
+	bool dispatchInputEvent(Input::Event event);
 	void dispatchFocusChange(bool in);
 	void dispatchDragDrop(const char *filename);
 	void dispatchDismissRequest();
@@ -158,10 +159,6 @@ private:
 	void dispatchSurfaceChange();
 };
 
-using OnGLDrawableChangedDelegate = DelegateFunc<void (Window *newDrawable)>;
-
-// Called when a system event changes the currently bound GL drawable
-void setOnGLDrawableChanged(OnGLDrawableChangedDelegate del);
 Window &mainWindow();
 Screen &mainScreen();
 

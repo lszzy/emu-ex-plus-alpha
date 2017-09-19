@@ -19,6 +19,7 @@
 #include <imagine/gfx/Texture.hh>
 #include <imagine/gfx/RenderTarget.hh>
 #include <imagine/pixmap/Pixmap.hh>
+#include <system_error>
 
 class VideoImageEffect
 {
@@ -31,7 +32,6 @@ public:
 	};
 
 private:
-	using ErrorMessage = std::array<char, 128>;
 	Gfx::Program prog{};
 	Gfx::Shader vShader{};
 	Gfx::Shader fShader{};
@@ -45,11 +45,11 @@ private:
 	IG::WP inputImgSize{1, 1};
 	bool useRGB565RenderTarget = true;
 
-	void initRenderTargetTexture();
-	void updateProgramUniforms();
-	void compile(bool isExternalTex);
-	CallResult compileEffect(EffectDesc desc, bool isExternalTex, bool useFallback, ErrorMessage *msg);
-	void deinitProgram();
+	void initRenderTargetTexture(Gfx::Renderer &r);
+	void updateProgramUniforms(Gfx::Renderer &r);
+	void compile(Gfx::Renderer &r, bool isExternalTex);
+	std::system_error compileEffect(Gfx::Renderer &r, EffectDesc desc, bool isExternalTex, bool useFallback);
+	void deinitProgram(Gfx::Renderer &r);
 
 public:
 	enum
@@ -63,12 +63,12 @@ public:
 	};
 
 	constexpr	VideoImageEffect() {}
-	void setEffect(uint effect, bool isExternalTex);
+	void setEffect(Gfx::Renderer &r, uint effect, bool isExternalTex);
 	uint effect();
-	void setImageSize(IG::WP size);
-	void setBitDepth(uint bitDepth);
+	void setImageSize(Gfx::Renderer &r, IG::WP size);
+	void setBitDepth(Gfx::Renderer &r, uint bitDepth);
 	Gfx::Program &program();
 	Gfx::RenderTarget &renderTarget();
-	void drawRenderTarget(Gfx::PixmapTexture &img);
-	void deinit();
+	void drawRenderTarget(Gfx::Renderer &r, Gfx::PixmapTexture &img);
+	void deinit(Gfx::Renderer &r);
 };

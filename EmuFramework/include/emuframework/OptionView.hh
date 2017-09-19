@@ -21,13 +21,17 @@
 #include <imagine/gui/TableView.hh>
 #include <imagine/audio/Audio.hh>
 #include <imagine/util/container/ArrayList.hh>
-#include <emuframework/EmuInput.hh>
-#include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/FilePicker.hh>
 #include <imagine/gui/TextTableView.hh>
-void onCloseModalPopWorkDir(Input::Event e);
-void chdirFromFilePath(const char *path);
+
+class OptionCategoryView : public TableView
+{
+	TextMenuItem subConfig[4];
+
+public:
+	OptionCategoryView(ViewAttachParams attach);
+};
 
 class VideoOptionView : public TableView
 {
@@ -79,8 +83,11 @@ protected:
 	BoolMenuItem dither;
 	StaticArrayList<MenuItem*, 24> item{};
 
+	void pushAndShowFrameRateSelectMenu(EmuSystem::VideoSystem vidSys, Input::Event e);
+	void onFrameTimeChange(EmuSystem::VideoSystem vidSys, double time);
+
 public:
-	VideoOptionView(Base::Window &win, bool customMenu = false);
+	VideoOptionView(ViewAttachParams attach, bool customMenu = false);
 	void loadStockItems();
 };
 
@@ -103,7 +110,7 @@ protected:
 	StaticArrayList<MenuItem*, 12> item{};
 
 public:
-	AudioOptionView(Base::Window &win, bool customMenu = false);
+	AudioOptionView(ViewAttachParams attach, bool customMenu = false);
 	void loadStockItems();
 };
 
@@ -114,7 +121,6 @@ protected:
 	MultiChoiceMenuItem autoSaveState;
 	BoolMenuItem confirmAutoLoadState;
 	BoolMenuItem confirmOverwriteState;
-	void savePathUpdated(const char *newPath);
 	char savePathStr[256]{};
 	TextMenuItem savePath;
 	BoolMenuItem checkSavePathWriteAccess;
@@ -128,8 +134,12 @@ protected:
 	#endif
 	StaticArrayList<MenuItem*, 24> item{};
 
+	void onSavePathChange(const char *path);
+	virtual void onFirmwarePathChange(const char *path, Input::Event e);
+	void pushAndShowFirmwarePathMenu(const char *name, Input::Event e);
+
 public:
-	SystemOptionView(Base::Window &win, bool customMenu = false);
+	SystemOptionView(ViewAttachParams attach, bool customMenu = false);
 	void loadStockItems();
 };
 
@@ -160,7 +170,7 @@ protected:
 	StaticArrayList<MenuItem*, 20> item{};
 
 public:
-	GUIOptionView(Base::Window &win, bool customMenu = false);
+	GUIOptionView(ViewAttachParams attach, bool customMenu = false);
 	void loadStockItems();
 };
 
@@ -170,7 +180,7 @@ public:
 	using BiosChangeDelegate = DelegateFunc<void ()>;
 
 	BiosSelectMenu(const char *name, FS::PathString *biosPathStr, BiosChangeDelegate onBiosChange,
-		EmuSystem::NameFilterFunc fsFilter, Base::Window &win);
+		EmuSystem::NameFilterFunc fsFilter, ViewAttachParams attach);
 
 protected:
 	TextMenuItem selectFile{};
@@ -178,18 +188,4 @@ protected:
 	BiosChangeDelegate onBiosChangeD{};
 	FS::PathString *biosPathStr{};
 	EmuSystem::NameFilterFunc fsFilter{};
-
-	void onSelectFile(const char* name, Input::Event e);
-};
-
-using PathChangeDelegate = DelegateFunc<void (const char *newPath)>;
-
-class FirmwarePathSelector
-{
-public:
-	PathChangeDelegate onPathChange;
-
-	constexpr FirmwarePathSelector() {}
-	void onClose(Input::Event e);
-	void init(const char *name, Input::Event e);
 };

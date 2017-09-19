@@ -23,10 +23,10 @@
 #include <imagine/logger/logger.h>
 #include "utils.hh"
 
-ssize_t MapIO::read(void *buff, size_t bytes, CallResult *resultOut)
+ssize_t MapIO::read(void *buff, size_t bytes, std::error_code *ecOut)
 {
 	assert(currPos >= data);
-	auto bytesRead = readAtAddr(buff, bytes, currPos, resultOut);
+	auto bytesRead = readAtAddr(buff, bytes, currPos, ecOut);
 	if(bytesRead > 0)
 	{
 		currPos += bytesRead;
@@ -34,9 +34,9 @@ ssize_t MapIO::read(void *buff, size_t bytes, CallResult *resultOut)
 	return bytesRead;
 }
 
-ssize_t MapIO::readAtPos(void *buff, size_t bytes, off_t offset, CallResult *resultOut)
+ssize_t MapIO::readAtPos(void *buff, size_t bytes, off_t offset, std::error_code *ecOut)
 {
-	return readAtAddr(buff, bytes, data + offset, resultOut);
+	return readAtAddr(buff, bytes, data + offset, ecOut);
 }
 
 const char *MapIO::mmapConst()
@@ -44,29 +44,29 @@ const char *MapIO::mmapConst()
 	return data;
 }
 
-ssize_t MapIO::write(const void *buff, size_t bytes, CallResult *resultOut)
+ssize_t MapIO::write(const void *buff, size_t bytes, std::error_code *ecOut)
 {
 	// TODO
-	if(resultOut)
-		*resultOut = UNSUPPORTED_OPERATION;
+	if(ecOut)
+		*ecOut = {ENOSYS, std::system_category()};
 	return -1;
 }
 
-off_t MapIO::seek(off_t offset, IO::SeekMode mode, CallResult *resultOut)
+off_t MapIO::seek(off_t offset, IO::SeekMode mode, std::error_code *ecOut)
 {
 	if(!isSeekModeValid(mode))
 	{
 		logErr("invalid seek parameter: %d", (int)mode);
-		if(resultOut)
-			*resultOut = INVALID_PARAMETER;
+		if(ecOut)
+			*ecOut = {EINVAL, std::system_category()};
 		return -1;
 	}
 	auto newPos = (const char*)transformOffsetToAbsolute(mode, offset, (off_t)data, off_t(dataEnd()), (off_t)currPos);
 	if(newPos < data || newPos > dataEnd())
 	{
 		logErr("illegal seek position");
-		if(resultOut)
-			*resultOut = OUT_OF_BOUNDS;
+		if(ecOut)
+			*ecOut = {EINVAL, std::system_category()};
 		return -1;
 	}
 	currPos = newPos;
@@ -88,6 +88,17 @@ MapIO::operator bool()
 	return data;
 }
 
+static int adviceToMAdv(IO::Advice advice)
+{
+	switch(advice)
+	{
+		default: return MADV_NORMAL;
+		case IO::Advice::SEQUENTIAL: return MADV_NORMAL;
+		case IO::Advice::RANDOM: return MADV_RANDOM;
+		case IO::Advice::WILLNEED: return MADV_WILLNEED;
+	}
+}
+
 #if defined __linux__ || defined __APPLE__
 void MapIO::advise(off_t offset, size_t bytes, Advice advice)
 {
@@ -102,20 +113,10 @@ void MapIO::advise(off_t offset, size_t bytes, Advice advice)
 	void *pageSrcAddr = (void*)roundDownToPageSize((ptrsize)srcAddr);
 	bytes += (ptrsize)srcAddr - (ptrsize)pageSrcAddr; // add extra bytes from rounding down to page size
 
-	if(advice == ADVICE_SEQUENTIAL)
+	int mAdv = adviceToMAdv(advice);
+	if(madvise(pageSrcAddr, bytes, mAdv) != 0)
 	{
-		if(madvise(pageSrcAddr, bytes, MADV_SEQUENTIAL) != 0)
-		{
-			logWarn("advise sequential for offset 0x%llX with size %zu failed", (unsigned long long)offset, bytes);
-		}
-	}
-	else if(advice == ADVICE_WILLNEED)
-	{
-		//logMsg("advising will need offset 0x%X @ page %p with size %u", (uint)offset, pageSrcAddr, (uint)len);
-		if(madvise(pageSrcAddr, bytes, MADV_WILLNEED) != 0)
-		{
-			logWarn("advise will need for offset 0x%llX with size %zu failed", (unsigned long long)offset, bytes);
-		}
+		logWarn("madvise for offset 0x%llX with size %zu failed", (unsigned long long)offset, bytes);
 	}
 }
 #endif
@@ -138,14 +139,14 @@ const char *MapIO::dataEnd()
 	return data + dataSize;
 }
 
-ssize_t MapIO::readAtAddr(void* buff, size_t bytes, const char *addr, CallResult *resultOut)
+ssize_t MapIO::readAtAddr(void* buff, size_t bytes, const char *addr, std::error_code *ecOut)
 {
 	if(addr >= dataEnd())
 	{
 		if(!data)
 		{
-			if(resultOut)
-				*resultOut = BAD_STATE;
+			if(ecOut)
+				*ecOut = {EBADF, std::system_category()};
 			return -1;
 		}
 		else

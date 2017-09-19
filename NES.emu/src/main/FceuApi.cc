@@ -128,10 +128,10 @@ int FCEUD_FDSReadBIOS(void *buff, uint32 size)
 		fceuReturnedError = "No FDS BIOS set";
 		return -1;
 	}
-	if(hasArchiveExtension(fdsBiosPath.data()))
+	if(EmuApp::hasArchiveExtension(fdsBiosPath.data()))
 	{
-		CallResult res = OK;
-		for(auto &entry : FS::ArchiveIterator{fdsBiosPath, res})
+		std::error_code ec{};
+		for(auto &entry : FS::ArchiveIterator{fdsBiosPath, ec})
 		{
 			if(entry.type() == FS::file_type::directory)
 			{
@@ -156,7 +156,7 @@ int FCEUD_FDSReadBIOS(void *buff, uint32 size)
 	else
 	{
 		FileIO io{};
-		io.open(fdsBiosPath);
+		io.open(fdsBiosPath, IO::AccessHint::ALL);
 		if(!io)
 		{
 			fceuReturnedError = "Error opening FDS BIOS";
@@ -170,6 +170,8 @@ int FCEUD_FDSReadBIOS(void *buff, uint32 size)
 		return io.read(buff, size);
 	}
 }
+
+void RefreshThrottleFPS() {}
 
 // for boards/transformer.cpp
 unsigned int *GetKeyboard(void)
@@ -214,9 +216,6 @@ int debug_loggingCD = 0;
 int FCEUnetplay=0;
 int FCEUNET_SendCommand(uint8, uint32) { return 0; }
 void NetplayUpdate(uint8 *joyp) { }
-
-// from movie.cpp
-void FCEUI_MakeBackupMovie(bool dispMessage) { }
 
 // from fceu.cpp
 bool CheckFileExists(const char* filename)

@@ -14,20 +14,22 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <emuframework/EmuVideoLayer.hh>
-#include <emuframework/EmuInput.hh>
 #include <emuframework/VController.hh>
 #include <emuframework/EmuApp.hh>
+#include <emuframework/EmuOptions.hh>
 #include <imagine/util/math/Point2D.hh>
 #include <algorithm>
+#include "private.hh"
+#include "privateInput.hh"
 
 extern bool touchControlsAreOn;
-bool touchControlsApplicable();
 
-void EmuVideoLayer::init()
+EmuVideoLayer::EmuVideoLayer(EmuVideo &video):
+	video{video}
 {
 	disp.init({});
 	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
-	vidImgEffect.setImageSize(video.vidPix.size());
+	vidImgEffect.setImageSize(video.renderer(), video.size());
 	#endif
 }
 
@@ -43,11 +45,11 @@ void EmuVideoLayer::resetImage()
 	#endif
 	{
 		logMsg("drawing video texture directly");
-		disp.setImg(video.vidImg);
+		disp.setImg(video.image());
 	}
 	compileDefaultPrograms();
 	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
-	vidImgEffect.setImageSize(video.vidPix.size());
+	vidImgEffect.setImageSize(video.renderer(), video.size());
 	#endif
 	setLinearFilter(useLinearFilter);
 }
@@ -61,7 +63,7 @@ void EmuVideoLayer::place(const IG::WindowRect &viewportRect, const Gfx::Project
 		if((uint)optionImageZoom == optionImageZoomIntegerOnly || (uint)optionImageZoom == optionImageZoomIntegerOnlyY)
 		{
 			uint scaleFactor;
-			uint gameX = video.vidPix.w(), gameY = video.vidPix.h();
+			uint gameX = video.size().x, gameY = video.size().y;
 
 			// Halve pixel sizes if image has mixed low/high-res content so scaling is based on lower res,
 			// this prevents jumping between two screen sizes in games like Seiken Densetsu 3 on SNES
@@ -155,7 +157,7 @@ void EmuVideoLayer::place(const IG::WindowRect &viewportRect, const Gfx::Project
 		Gfx::GC yOffset = 0;
 		int yOffsetPixels = 0;
 		#ifdef CONFIG_EMUFRAMEWORK_VCONTROLS
-		if(onScreenControlsOverlay && viewportAspectRatio < 1. && touchControlsAreOn && touchControlsApplicable())
+		if(onScreenControlsOverlay && viewportAspectRatio < 1. && touchControlsAreOn && EmuSystem::touchControlsApplicable())
 		{
 			auto &layoutPos = vControllerLayoutPos[mainWin.viewport().isPortrait() ? 1 : 0];
 			if(layoutPos[VCTRL_LAYOUT_DPAD_IDX].origin.onTop() && layoutPos[VCTRL_LAYOUT_FACE_BTN_GAMEPAD_IDX].origin.onTop())
@@ -226,27 +228,28 @@ void EmuVideoLayer::place(const IG::WindowRect &viewportRect, const Gfx::Project
 void EmuVideoLayer::draw(const Gfx::ProjectionPlane &projP)
 {
 	using namespace Gfx;
+	auto &r = video.renderer();
 	if(EmuSystem::isStarted())
 	{
 		bool videoActive = true;
 		if(unlikely(!EmuSystem::isActive()))
 		{
-			setColor(.25, .25, .25);
+			r.setColor(.25, .25, .25);
 			videoActive = false;
 		}
 
-		setBlendMode(0);
+		r.setBlendMode(0);
 		#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
 		if(vidImgEffect.program())
 		{
-			auto prevViewport = Gfx::viewport();
-			setClipRect(false);
-			setProgram(vidImgEffect.program());
-			vidImgEffect.renderTarget().setCurrent();
-			Gfx::clear();
-			vidImgEffect.drawRenderTarget(video.vidImg);
-			RenderTarget::setDefaultCurrent();
-			Gfx::setViewport(prevViewport);
+			auto prevViewport = r.viewport();
+			r.setClipRect(false);
+			r.setProgram(vidImgEffect.program());
+			r.setRenderTarget(vidImgEffect.renderTarget());
+			r.clear();
+			vidImgEffect.drawRenderTarget(r, video.image());
+			r.setRenderTarget({});
+			r.setViewport(prevViewport);
 			disp.useDefaultProgram(videoActive ? IMG_MODE_REPLACE : IMG_MODE_MODULATE, projP.makeTranslate());
 		}
 		else
@@ -255,39 +258,52 @@ void EmuVideoLayer::draw(const Gfx::ProjectionPlane &projP)
 			disp.useDefaultProgram(videoActive ? IMG_MODE_REPLACE : IMG_MODE_MODULATE, projP.makeTranslate());
 		}
 		if(useLinearFilter)
-			Gfx::TextureSampler::bindDefaultNoMipClampSampler();
+			Gfx::TextureSampler::bindDefaultNoMipClampSampler(r);
 		else
-			Gfx::TextureSampler::bindDefaultNoLinearNoMipClampSampler();
-		disp.draw();
-		vidImgOverlay.draw();
+			Gfx::TextureSampler::bindDefaultNoLinearNoMipClampSampler(r);
+		disp.draw(r);
+		vidImgOverlay.draw(r);
 	}
+}
+
+void EmuVideoLayer::setOverlay(uint effect)
+{
+	vidImgOverlay.setEffect(video.renderer(), effect);
+}
+
+void EmuVideoLayer::setOverlayIntensity(Gfx::GC intensity)
+{
+	vidImgOverlay.intensity = intensity;
 }
 
 void EmuVideoLayer::placeOverlay()
 {
-	vidImgOverlay.place(disp, video.vidPix.h());
+	vidImgOverlay.place(disp, video.size().y);
+}
+
+void EmuVideoLayer::setEffectBitDepth(uint bits)
+{
+	vidImgEffect.setBitDepth(video.renderer(), bits);
 }
 
 void EmuVideoLayer::placeEffect()
 {
 	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
-	vidImgEffect.setImageSize(video.vidPix.size());
+	vidImgEffect.setImageSize(video.renderer(), video.size());
 	#endif
 }
 
 void EmuVideoLayer::compileDefaultPrograms()
 {
-	auto compiled = disp.compileDefaultProgram(Gfx::IMG_MODE_REPLACE);
-	compiled |= disp.compileDefaultProgram(Gfx::IMG_MODE_MODULATE);
-	if(compiled)
-		Gfx::autoReleaseShaderCompiler();
+	disp.compileDefaultProgramOneShot(Gfx::IMG_MODE_REPLACE);
+	disp.compileDefaultProgramOneShot(Gfx::IMG_MODE_MODULATE);
 }
 
 void EmuVideoLayer::setEffect(uint effect)
 {
 	#ifdef CONFIG_GFX_OPENGL_SHADER_PIPELINE
-	assert(video.vidImg);
-	vidImgEffect.setEffect(effect, video.isExternalTexture());
+	assert(video.image());
+	vidImgEffect.setEffect(video.renderer(), effect, video.isExternalTexture());
 	placeEffect();
 	resetImage();
 	#endif
@@ -297,7 +313,7 @@ void EmuVideoLayer::setLinearFilter(bool on)
 {
 	useLinearFilter = on;
 	if(useLinearFilter)
-		Gfx::TextureSampler::initDefaultNoMipClampSampler();
+		Gfx::TextureSampler::initDefaultNoMipClampSampler(video.renderer());
 	else
-		Gfx::TextureSampler::initDefaultNoLinearNoMipClampSampler();
+		Gfx::TextureSampler::initDefaultNoLinearNoMipClampSampler(video.renderer());
 }

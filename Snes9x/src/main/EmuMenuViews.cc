@@ -1,5 +1,5 @@
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
 #include "EmuCheatViews.hh"
 #include "internal.hh"
 #include <snes9x.h>
@@ -10,7 +10,7 @@ static constexpr bool HAS_NSRT = true;
 static constexpr bool HAS_NSRT = false;
 #endif
 
-class EmuInputOptionView : public TableView
+class CustomInputOptionView : public TableView
 {
 	BoolMenuItem multitap
 	{
@@ -53,11 +53,11 @@ class EmuInputOptionView : public TableView
 	};
 
 public:
-	EmuInputOptionView(Base::Window &win):
+	CustomInputOptionView(ViewAttachParams attach):
 		TableView
 		{
 			"Input Options",
-			win,
+			attach,
 			[this](const TableView &)
 			{
 				return 2;
@@ -74,7 +74,70 @@ public:
 	{}
 };
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomVideoOptionView : public VideoOptionView
+{
+	static void videoSystemChangedMessage()
+	{
+		if(EmuSystem::gameIsRunning())
+		{
+			EmuApp::postMessage("Change does not affect currently running game");
+		}
+	}
+
+	TextMenuItem videoSystemItem[4]
+	{
+		{
+			"Auto",
+			[]()
+			{
+				optionVideoSystem = 0;
+				Settings.ForceNTSC = Settings.ForcePAL = 0;
+				videoSystemChangedMessage();
+			}},
+		{
+			"NTSC",
+			[]()
+			{
+				optionVideoSystem = 1;
+				Settings.ForceNTSC = 1;
+				videoSystemChangedMessage();
+			}},
+		{
+			"PAL",
+			[]()
+			{
+				optionVideoSystem = 2;
+				Settings.ForcePAL = 1;
+				videoSystemChangedMessage();
+			}
+		},
+		{
+			"NTSC + PAL Spoof",
+			[]()
+			{
+				optionVideoSystem = 3;
+				Settings.ForceNTSC = Settings.ForcePAL = 1;
+				videoSystemChangedMessage();
+			}
+		},
+	};
+
+	MultiChoiceMenuItem videoSystem
+	{
+		"Video System",
+		optionVideoSystem,
+		videoSystemItem
+	};
+
+public:
+	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
+	{
+		loadStockItems();
+		item.emplace_back(&videoSystem);
+	}
+};
+
+class CustomSystemOptionView : public SystemOptionView
 {
 	#ifndef SNES9X_VERSION_1_4
 	BoolMenuItem blockInvalidVRAMAccess
@@ -90,7 +153,7 @@ class EmuSystemOptionView : public SystemOptionView
 	#endif
 
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		#ifndef SNES9X_VERSION_1_4
@@ -99,18 +162,15 @@ public:
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new MenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new VideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::INPUT_OPTIONS: return new EmuInputOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
-		case ViewID::EDIT_CHEATS: return new EmuEditCheatListView(win);
-		case ViewID::LIST_CHEATS: return new EmuCheatsView(win);
+		case ViewID::VIDEO_OPTIONS: return new CustomVideoOptionView(attach);
+		case ViewID::INPUT_OPTIONS: return new CustomInputOptionView(attach);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
+		case ViewID::EDIT_CHEATS: return new EmuEditCheatListView(attach);
+		case ViewID::LIST_CHEATS: return new EmuCheatsView(attach);
 		default: return nullptr;
 	}
 }

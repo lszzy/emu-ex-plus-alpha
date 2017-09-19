@@ -1,3 +1,17 @@
+/*  This file is part of NGP.emu.
+
+	NGP.emu is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	NGP.emu is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with NGP.emu.  If not, see <http://www.gnu.org/licenses/> */
 
 #define LOGTAG "main"
 #include <neopop.h>
@@ -11,46 +25,19 @@
 
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2014\nRobert Broglia\nwww.explusalpha.com\n\n(c) 2004\nthe NeoPop Team\nwww.nih.at";
 uint32 frameskip_active = 0;
+static const int ngpResX = SCREEN_WIDTH, ngpResY = SCREEN_HEIGHT;
+static constexpr auto pixFmt = IG::PIXEL_FMT_RGB565;
+static EmuVideo *emuVideo{};
+static IG::Pixmap srcPix{{{ngpResX, ngpResY}, pixFmt}, cfb};
 
-// controls
-
-enum
-{
-	ngpKeyIdxUp = EmuControls::systemKeyMapStart,
-	ngpKeyIdxRight,
-	ngpKeyIdxDown,
-	ngpKeyIdxLeft,
-	ngpKeyIdxLeftUp,
-	ngpKeyIdxRightUp,
-	ngpKeyIdxRightDown,
-	ngpKeyIdxLeftDown,
-	ngpKeyIdxOption,
-	ngpKeyIdxA,
-	ngpKeyIdxB,
-	ngpKeyIdxATurbo,
-	ngpKeyIdxBTurbo
-};
-
-enum {
-	CFGKEY_NGPKEY_LANGUAGE = 269,
-};
-
-static Option<OptionMethodRef<template_ntype(language_english)>, uint8> optionNGPLanguage{CFGKEY_NGPKEY_LANGUAGE, 1};
-
-const char *EmuSystem::inputFaceBtnName = "A/B";
-const char *EmuSystem::inputCenterBtnName = "Option";
-const uint EmuSystem::inputFaceBtns = 2;
-const uint EmuSystem::inputCenterBtns = 1;
-const bool EmuSystem::inputHasTriggerBtns = false;
-const bool EmuSystem::inputHasRevBtnLayout = true;
-const char *EmuSystem::configFilename = "NgpEmu.config";
-const uint EmuSystem::maxPlayers = 1;
-const AspectRatioInfo EmuSystem::aspectRatioInfo[] =
-{
-		{"20:19 (Original)", 20, 19},
-		EMU_SYSTEM_DEFAULT_ASPECT_RATIO_INFO_INIT
-};
-const uint EmuSystem::aspectRatioInfos = IG::size(EmuSystem::aspectRatioInfo);
+EmuSystem::NameFilterFunc EmuSystem::defaultFsFilter =
+	[](const char *name)
+	{
+		return string_hasDotExtension(name, "ngc") ||
+				string_hasDotExtension(name, "ngp") ||
+				string_hasDotExtension(name, "npc");
+	};
+EmuSystem::NameFilterFunc EmuSystem::defaultBenchmarkFsFilter = defaultFsFilter;
 
 const char *EmuSystem::shortSystemName()
 {
@@ -62,135 +49,31 @@ const char *EmuSystem::systemName()
 	return "Neo Geo Pocket";
 }
 
-void EmuSystem::initOptions() {}
-
-void EmuSystem::onOptionsLoaded() {}
-
-bool EmuSystem::readConfig(IO &io, uint key, uint readSize)
-{
-	switch(key)
-	{
-		default: return 0;
-		bcase CFGKEY_NGPKEY_LANGUAGE: optionNGPLanguage.readFromIO(io, readSize);
-	}
-	return 1;
-}
-
-void EmuSystem::writeConfig(IO &io)
-{
-	optionNGPLanguage.writeWithKeyIfNotDefault(io);
-}
-
-static bool hasNGPExtension(const char *name)
-{
-	return string_hasDotExtension(name, "ngc") ||
-			string_hasDotExtension(name, "ngp") ||
-			string_hasDotExtension(name, "npc");
-}
-
-EmuSystem::NameFilterFunc EmuSystem::defaultFsFilter = hasNGPExtension;
-EmuSystem::NameFilterFunc EmuSystem::defaultBenchmarkFsFilter = hasNGPExtension;
-
-static const int ngpResX = SCREEN_WIDTH, ngpResY = SCREEN_HEIGHT;
-
-static constexpr auto pixFmt = IG::PIXEL_FMT_RGB565;
-
-static const uint ctrlUpBit = 0x01, ctrlDownBit = 0x02, ctrlLeftBit = 0x04, ctrlRightBit = 0x08,
-		ctrlABit = 0x10, ctrlBBit = 0x20, ctrlOptionBit = 0x40;
-
-void updateVControllerMapping(uint player, SysVController::Map &map)
-{
-	map[SysVController::F_ELEM] = ctrlABit;
-	map[SysVController::F_ELEM+1] = ctrlBBit;
-
-	map[SysVController::C_ELEM] = ctrlOptionBit;
-
-	map[SysVController::D_ELEM] = ctrlUpBit | ctrlLeftBit;
-	map[SysVController::D_ELEM+1] = ctrlUpBit;
-	map[SysVController::D_ELEM+2] = ctrlUpBit | ctrlRightBit;
-	map[SysVController::D_ELEM+3] = ctrlLeftBit;
-	map[SysVController::D_ELEM+5] = ctrlRightBit;
-	map[SysVController::D_ELEM+6] = ctrlDownBit | ctrlLeftBit;
-	map[SysVController::D_ELEM+7] = ctrlDownBit;
-	map[SysVController::D_ELEM+8] = ctrlDownBit | ctrlRightBit;
-}
-
-uint EmuSystem::translateInputAction(uint input, bool &turbo)
-{
-	turbo = 0;
-	switch(input)
-	{
-		case ngpKeyIdxUp: return ctrlUpBit;
-		case ngpKeyIdxRight: return ctrlRightBit;
-		case ngpKeyIdxDown: return ctrlDownBit;
-		case ngpKeyIdxLeft: return ctrlLeftBit;
-		case ngpKeyIdxLeftUp: return ctrlLeftBit | ctrlUpBit;
-		case ngpKeyIdxRightUp: return ctrlRightBit | ctrlUpBit;
-		case ngpKeyIdxRightDown: return ctrlRightBit | ctrlDownBit;
-		case ngpKeyIdxLeftDown: return ctrlLeftBit | ctrlDownBit;
-		case ngpKeyIdxOption: return ctrlOptionBit;
-		case ngpKeyIdxATurbo: turbo = 1;
-		case ngpKeyIdxA: return ctrlABit;
-		case ngpKeyIdxBTurbo: turbo = 1;
-		case ngpKeyIdxB: return ctrlBBit;
-		default: bug_branch("%d", input);
-	}
-	return 0;
-}
-
-void EmuSystem::handleInputAction(uint state, uint emuKey)
-{
-	uchar &ctrlBits = ram[0x6F82];
-	ctrlBits = IG::setOrClearBits(ctrlBits, (uchar)emuKey, state == Input::PUSHED);
-}
-
-static bool renderToScreen = 0;
-
 void EmuSystem::reset(ResetMode mode)
 {
 	assert(gameIsRunning());
 	::reset();
 }
 
-static char saveSlotChar(int slot)
-{
-	switch(slot)
-	{
-		case -1: return 'A';
-		case 0 ... 9: return '0' + slot;
-		default: bug_branch("%d", slot); return 0;
-	}
-}
-
 FS::PathString EmuSystem::sprintStateFilename(int slot, const char *statePath, const char *gameName)
 {
-	return FS::makePathStringPrintf("%s/%s.0%c.ngs", statePath, gameName, saveSlotChar(slot));
+	return FS::makePathStringPrintf("%s/%s.0%c.ngs", statePath, gameName, saveSlotCharUpper(slot));
 }
 
-int EmuSystem::saveState()
+EmuSystem::Error EmuSystem::saveState(const char *path)
 {
-	auto saveStr = sprintStateFilename(saveStateSlot);
-	fixFilePermissions(saveStr);
-	if(!state_store(saveStr.data()))
-		return STATE_RESULT_IO_ERROR;
+	if(!state_store(path))
+		return makeFileWriteError();
 	else
-		return STATE_RESULT_OK;
+		return {};
 }
 
-int EmuSystem::loadState(int saveStateSlot)
+EmuSystem::Error EmuSystem::loadState(const char *path)
 {
-	auto saveStr = sprintStateFilename(saveStateSlot);
-	if(FS::exists(saveStr))
-	{
-		logMsg("loading state %s", saveStr.data());
-		if(!state_restore(saveStr.data()))
-			return STATE_RESULT_IO_ERROR;
-		else
-		{
-			return STATE_RESULT_OK;
-		}
-	}
-	return STATE_RESULT_NO_FILE;
+	if(!state_restore(path))
+		return makeFileReadError();
+	else
+		return {};
 }
 
 bool system_io_state_read(const char* filename, uchar* buffer, uint32 bufferLength)
@@ -215,11 +98,8 @@ bool system_io_flash_write(uchar* buffer, uint32 len)
 		return 0;
 	auto saveStr = sprintSaveFilename();
 	logMsg("writing flash %s", saveStr.data());
-	CallResult ret;
-	if((ret = writeToNewFile(saveStr.data(), buffer, len)) == OK)
-		return 1;
-	else
-		return 0;
+	auto ec = writeToNewFile(saveStr.data(), buffer, len);
+	return !ec;
 }
 
 void EmuSystem::saveBackupMem()
@@ -228,27 +108,11 @@ void EmuSystem::saveBackupMem()
 	flash_commit();
 }
 
-void EmuSystem::saveAutoState()
-{
-	if(gameIsRunning() && optionAutoSaveState)
-	{
-		logMsg("saving auto-state");
-		auto saveStr = sprintStateFilename(-1);
-		fixFilePermissions(saveStr);
-		state_store(saveStr.data());
-	}
-}
-
 void EmuSystem::closeSystem()
 {
 	rom_unload();
 	logMsg("closing game %s", gameName().data());
 }
-
-bool EmuSystem::vidSysIsPAL() { return 0; }
-uint EmuSystem::multiresVideoBaseX() { return 0; }
-uint EmuSystem::multiresVideoBaseY() { return 0; }
-bool touchControlsApplicable() { return 1; }
 
 static bool romLoad(IO &io)
 {
@@ -266,39 +130,28 @@ static bool romLoad(IO &io)
 	return false;
 }
 
-int EmuSystem::loadGame(const char *path)
+EmuSystem::Error EmuSystem::loadGame(IO &io, OnLoadProgressDelegate)
 {
-	bug_exit("should only use loadGameFromIO()");
-	return 0;
-}
-
-int EmuSystem::loadGameFromIO(IO &io, const char *path, const char *origFilename)
-{
-	closeGame(true);
-	emuVideo.initImage(false, ngpResX, ngpResY);
-	setupGamePaths(path);
 	if(!romLoad(io))
 	{
-		popup.postError("Error loading game");
-		return 0;
+		return EmuSystem::makeError("Error loading game");
 	}
 	rom_loaded();
 	logMsg("loaded NGP rom: %s, catalog %d,%d", rom.name, rom_header->catalog, rom_header->subCatalog);
 	::reset();
 	rom_bootHacks();
-	return 1;
+	return {};
 }
 
-void EmuSystem::clearInputBuffers()
+void EmuSystem::onPrepareVideo(EmuVideo &video)
 {
-	ram[0x6F82] = 0;
+	video.setFormat({{ngpResX, ngpResY}, pixFmt});
 }
 
-void EmuSystem::configAudioRate(double frameTime)
+void EmuSystem::configAudioRate(double frameTime, int rate)
 {
-	pcmFormat.rate = optionSoundRate;
-	double rate = std::round(optionSoundRate * (60. * frameTime));
-	sound_init(rate);
+	double mixRate = std::round(rate * (60. * frameTime));
+	sound_init(mixRate);
 }
 
 void system_sound_chipreset(void)
@@ -308,18 +161,17 @@ void system_sound_chipreset(void)
 
 void system_VBL(void)
 {
-	if(likely(renderToScreen))
+	if(likely(emuVideo))
 	{
-		updateAndDrawEmuVideo();
-		renderToScreen = 0;
+		emuVideo->writeFrame(srcPix);
+		emuVideo = {};
 	}
 }
 
-void EmuSystem::runFrame(bool renderGfx, bool processGfx, bool renderAudio)
+void EmuSystem::runFrame(EmuVideo *video, bool renderAudio)
 {
-	if(renderGfx)
-		renderToScreen = 1;
-	frameskip_active = processGfx ? 0 : 1;
+	emuVideo = video;
+	frameskip_active = video ? 0 : 1;
 
 	#ifndef NEOPOP_DEBUG
 	emulate();
@@ -402,11 +254,7 @@ void system_debug_clear(void) { }
 void gfx_buildColorConvMap();
 void gfx_buildMonoConvMap();
 
-void EmuSystem::savePathChanged() { }
-
-bool EmuSystem::hasInputOptions() { return false; }
-
-void EmuSystem::onCustomizeNavView(EmuNavView &view)
+void EmuApp::onCustomizeNavView(EmuApp::NavView &view)
 {
 	const Gfx::LGradientStopDesc navViewGrad[] =
 	{
@@ -419,13 +267,12 @@ void EmuSystem::onCustomizeNavView(EmuNavView &view)
 	view.setBackgroundGradient(navViewGrad);
 }
 
-CallResult EmuSystem::onInit()
+EmuSystem::Error EmuSystem::onInit()
 {
 	EmuSystem::pcmFormat.channels = 1;
-	emuVideo.initPixmap((char*)cfb, pixFmt, ngpResX, ngpResY);
 	gfx_buildMonoConvMap();
 	gfx_buildColorConvMap();
 	system_colour = COLOURMODE_AUTO;
 	bios_install();
-	return OK;
+	return {};
 }

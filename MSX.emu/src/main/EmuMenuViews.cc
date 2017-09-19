@@ -1,5 +1,5 @@
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
 #include <emuframework/FilePicker.hh>
 #include "internal.hh"
 
@@ -17,11 +17,11 @@ static void printInstallFirmwareFilesStr(char (&str)[S])
 
 void installFirmwareFiles()
 {
-	CallResult ret;
-	FS::create_directory(machineBasePath, ret);
-	if(ret != OK && ret != ALREADY_EXISTS)
+	std::error_code ec{};
+	FS::create_directory(machineBasePath, ec);
+	if(ec && ec.value() != (int)std::errc::file_exists)
 	{
-		popup.printf(4, 1, "Can't create directory:\n%s", machineBasePath.data());
+		EmuApp::printfMessage(4, 1, "Can't create directory:\n%s", machineBasePath.data());
 		return;
 	}
 
@@ -34,11 +34,11 @@ void installFirmwareFiles()
 	for(auto e : dirsToCreate)
 	{
 		auto pathTemp = FS::makePathStringPrintf("%s/%s", machineBasePath.data(), e);
-		CallResult ret;
-		FS::create_directory(pathTemp, ret);
-		if(ret != OK && ret != ALREADY_EXISTS)
+		std::error_code ec{};
+		FS::create_directory(pathTemp, ec);
+		if(ec && ec.value() != (int)std::errc::file_exists)
 		{
-			popup.printf(4, 1, "Can't create directory:\n%s", pathTemp.data());
+			EmuApp::printfMessage(4, 1, "Can't create directory:\n%s", pathTemp.data());
 			return;
 		}
 	}
@@ -60,28 +60,28 @@ void installFirmwareFiles()
 
 	for(auto &e : srcPath)
 	{
-		auto src = openAppAssetIO(e);
+		auto src = openAppAssetIO(e, IO::AccessHint::ALL);
 		if(!src)
 		{
-			popup.printf(4, 1, "Can't open source file:\n %s", e);
+			EmuApp::printfMessage(4, 1, "Can't open source file:\n %s", e);
 			return;
 		}
 		auto e_i = &e - srcPath;
 		auto pathTemp = FS::makePathStringPrintf("%s/Machines/%s/%s",
 				machineBasePath.data(), destDir[e_i], strstr(e, "config") ? "config.ini" : e);
-		CallResult ret = writeIOToNewFile(src, pathTemp.data());
-		if(ret != OK)
+		auto ec = writeIOToNewFile(src, pathTemp.data());
+		if(ec)
 		{
-			popup.printf(4, 1, "Can't write file:\n%s", e);
+			EmuApp::printfMessage(4, 1, "Can't write file:\n%s", e);
 			return;
 		}
 	}
 
 	string_copy(optionMachineNameStr, "MSX2 - C-BIOS");
-	popup.post("Installation OK");
+	EmuApp::postMessage("Installation OK");
 }
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomSystemOptionView : public SystemOptionView
 {
 private:
 
@@ -98,7 +98,7 @@ private:
 		{
 			if(!msxMachineItem.size())
 			{
-				popup.printf(4, 1, "Place machine directory in:\n%s", machineBasePath.data());
+				EmuApp::printfMessage(4, 1, "Place machine directory in:\n%s", machineBasePath.data());
 				return;
 			}
 			item.defaultOnSelect(view, e);
@@ -155,14 +155,14 @@ private:
 		[this](TextMenuItem &, View &, Input::Event e)
 		{
 			printInstallFirmwareFilesStr(installFirmwareFilesStr);
-			auto &ynAlertView = *new YesNoAlertView{window(), installFirmwareFilesStr};
+			auto &ynAlertView = *new YesNoAlertView{attachParams(), installFirmwareFilesStr};
 			ynAlertView.setOnYes(
 				[](TextMenuItem &, View &view, Input::Event e)
 				{
 					view.dismiss();
 					installFirmwareFiles();
 				});
-			modalViewController.pushAndShow(ynAlertView, e);
+			EmuApp::pushAndShowModalView(ynAlertView, e);
 		}
 	};
 
@@ -182,33 +182,33 @@ private:
 		string_printf(str, "System/BIOS Path: %s", strlen(machineCustomPath.data()) ? FS::basename(machineCustomPath).data() : "Default");
 	}
 
-	FirmwarePathSelector machineFileSelector;
 	char machineFilePathStr[256]{};
+
 	TextMenuItem machineFilePath
 	{
 		machineFilePathStr,
 		[this](TextMenuItem &, View &, Input::Event e)
 		{
-			machineFileSelector.init("System/BIOS Path", e);
-			machineFileSelector.onPathChange =
-				[this](const char *newPath)
-				{
-					printMachinePathMenuEntryStr(machineFilePathStr);
-					machineFilePath.compile(projP);
-					machineBasePath = makeMachineBasePath(machineCustomPath);
-					reloadMachineItem();
-					msxMachine.compile(projP);
-					if(!strlen(newPath))
-					{
-						popup.printf(4, false, "Using default path:\n%s/MSX.emu", (Config::envIsLinux && !Config::MACHINE_IS_PANDORA) ? Base::assetPath().data() : Base::storagePath().data());
-					}
-				};
+			pushAndShowFirmwarePathMenu("System/BIOS Path", e);
 			postDraw();
 		}
 	};
 
+	void onFirmwarePathChange(const char *path, Input::Event e) final
+	{
+		printMachinePathMenuEntryStr(machineFilePathStr);
+		machineFilePath.compile(renderer(), projP);
+		machineBasePath = makeMachineBasePath(machineCustomPath);
+		reloadMachineItem();
+		msxMachine.compile(renderer(), projP);
+		if(!strlen(path))
+		{
+			EmuApp::printfMessage(4, false, "Using default path:\n%s/MSX.emu", (Config::envIsLinux && !Config::MACHINE_IS_PANDORA) ? Base::assetPath().data() : Base::storagePath().data());
+		}
+	}
+
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		reloadMachineItem();
@@ -249,8 +249,7 @@ public:
 
 	void updateHDText(int slot)
 	{
-		string_printf(hdSlotStr[slot], "%s %s", hdSlotPrefix[slot],
-			strlen(hdName[slot]) ? FS::basename(hdName[slot]).data() : "");
+		string_printf(hdSlotStr[slot], "%s %s", hdSlotPrefix[slot], hdName[slot].data());
 	}
 
 	void updateHDStatusFromCartSlot(int cartSlot)
@@ -265,14 +264,14 @@ public:
 
 	void onHDMediaChange(const char *name, int slot)
 	{
-		strcpy(hdName[slot], name);
+		string_copy(hdName[slot], name);
 		updateHDText(slot);
-		hdSlot[slot].compile(projP);
+		hdSlot[slot].compile(renderer(), projP);
 	}
 
 	void addHDFilePickerView(Input::Event e, uint8 slot)
 	{
-		auto &fPicker = *new EmuFilePicker{window(), false,
+		auto &fPicker = *new EmuFilePicker{attachParams(), EmuSystem::gamePath(), false,
 			MsxMediaFilePicker::fsFilter(MsxMediaFilePicker::DISK), true};
 		fPicker.setOnSelectFile(
 			[this, slot](FSPicker &picker, const char* name, Input::Event e)
@@ -285,16 +284,16 @@ public:
 				}
 				picker.dismiss();
 			});
-		modalViewController.pushAndShow(fPicker, e);
+		EmuApp::pushAndShowModalView(fPicker, e);
 	}
 
 	void onSelectHD(TextMenuItem &item, Input::Event e, uint8 slot)
 	{
 		if(!item.active())
 			return;
-		if(strlen(hdName[slot]))
+		if(strlen(hdName[slot].data()))
 		{
-			auto &multiChoiceView = *new TextTableView{"Hard Drive", window(), IG::size(insertEjectDiskMenuStr)};
+			auto &multiChoiceView = *new TextTableView{"Hard Drive", attachParams(), IG::size(insertEjectDiskMenuStr)};
 			multiChoiceView.appendItem(insertEjectDiskMenuStr[0],
 				[this, slot](TextMenuItem &, View &, Input::Event e)
 				{
@@ -309,7 +308,7 @@ public:
 					onHDMediaChange("", slot);
 					popAndShow();
 				});
-			viewStack.pushAndShow(multiChoiceView, e);
+			pushAndShow(multiChoiceView, e);
 		}
 		else
 		{
@@ -331,21 +330,20 @@ public:
 
 	void updateROMText(int slot)
 	{
-		string_printf(romSlotStr[slot], "%s %s", romSlotPrefix[slot],
-			strlen(cartName[slot]) ? FS::basename(cartName[slot]).data() : "");
+		string_printf(romSlotStr[slot], "%s %s", romSlotPrefix[slot], cartName[slot].data());
 	}
 
 	void onROMMediaChange(const char *name, int slot)
 	{
-		strcpy(cartName[slot], name);
+		string_copy(cartName[slot], name);
 		updateROMText(slot);
-		romSlot[slot].compile(projP);
+		romSlot[slot].compile(renderer(), projP);
 		updateHDStatusFromCartSlot(slot);
 	}
 
 	void addROMFilePickerView(Input::Event e, uint8 slot)
 	{
-		auto &fPicker = *new EmuFilePicker{window(), false,
+		auto &fPicker = *new EmuFilePicker{attachParams(), EmuSystem::gamePath(), false,
 			MsxMediaFilePicker::fsFilter(MsxMediaFilePicker::ROM), true};
 		fPicker.setOnSelectFile(
 			[this, slot](FSPicker &picker, const char* name, Input::Event e)
@@ -356,12 +354,12 @@ public:
 				}
 				picker.dismiss();
 			});
-		modalViewController.pushAndShow(fPicker, e);
+		EmuApp::pushAndShowModalView(fPicker, e);
 	}
 
 	void onSelectROM(Input::Event e, uint8 slot)
 	{
-		auto &multiChoiceView = *new TextTableView{"ROM Cartridge Slot", window(), 5};
+		auto &multiChoiceView = *new TextTableView{"ROM Cartridge Slot", attachParams(), 5};
 		multiChoiceView.appendItem("Insert File",
 			[this, slot](TextMenuItem &, View &, Input::Event e)
 			{
@@ -395,13 +393,13 @@ public:
 			{
 				if(!boardChangeCartridge(slot, ROM_SUNRISEIDE, "Sunrise IDE", 0))
 				{
-					popup.postError("Error loading Sunrise IDE device");
+					EmuApp::postMessage(true, "Error loading Sunrise IDE device");
 				}
 				else
 					onROMMediaChange("Sunrise IDE", slot);
 				popAndShow();
 			});
-		viewStack.pushAndShow(multiChoiceView, e);
+		pushAndShow(multiChoiceView, e);
 	}
 
 	TextMenuItem romSlot[2]
@@ -415,20 +413,19 @@ public:
 
 	void updateDiskText(int slot)
 	{
-		string_printf(diskSlotStr[slot], "%s %s", diskSlotPrefix[slot],
-			strlen(diskName[slot]) ? FS::basename(diskName[slot]).data() : "");
+		string_printf(diskSlotStr[slot], "%s %s", diskSlotPrefix[slot], diskName[slot].data());
 	}
 
 	void onDiskMediaChange(const char *name, int slot)
 	{
-		strcpy(diskName[slot], name);
+		string_copy(diskName[slot], name);
 		updateDiskText(slot);
-		diskSlot[slot].compile(projP);
+		diskSlot[slot].compile(renderer(), projP);
 	}
 
 	void addDiskFilePickerView(Input::Event e, uint8 slot)
 	{
-		auto &fPicker = *new EmuFilePicker{window(), false,
+		auto &fPicker = *new EmuFilePicker{attachParams(), EmuSystem::gamePath(), false,
 			MsxMediaFilePicker::fsFilter(MsxMediaFilePicker::DISK), true};
 		fPicker.setOnSelectFile(
 			[this, slot](FSPicker &picker, const char* name, Input::Event e)
@@ -440,14 +437,14 @@ public:
 				}
 				picker.dismiss();
 			});
-		modalViewController.pushAndShow(fPicker, e);
+		EmuApp::pushAndShowModalView(fPicker, e);
 	}
 
 	void onSelectDisk(Input::Event e, uint8 slot)
 	{
-		if(strlen(diskName[slot]))
+		if(strlen(diskName[slot].data()))
 		{
-			auto &multiChoiceView = *new TextTableView{"Disk Drive", window(), IG::size(insertEjectDiskMenuStr)};
+			auto &multiChoiceView = *new TextTableView{"Disk Drive", attachParams(), IG::size(insertEjectDiskMenuStr)};
 			multiChoiceView.appendItem(insertEjectDiskMenuStr[0],
 				[this, slot](TextMenuItem &, View &, Input::Event e)
 				{
@@ -462,7 +459,7 @@ public:
 					onDiskMediaChange("", slot);
 					popAndShow();
 				});
-			viewStack.pushAndShow(multiChoiceView, e);
+			pushAndShow(multiChoiceView, e);
 		}
 		else
 		{
@@ -480,11 +477,11 @@ public:
 	StaticArrayList<MenuItem*, 9> item{};
 
 public:
-	MsxIOControlView(Base::Window &win):
+	MsxIOControlView(ViewAttachParams attach):
 		TableView
 		{
 			"IO Control",
-			win,
+			attach,
 			[this](const TableView &)
 			{
 				return item.size();
@@ -520,7 +517,7 @@ const char *MsxIOControlView::romSlotPrefix[2] {"ROM1:", "ROM2:"};
 const char *MsxIOControlView::diskSlotPrefix[2] {"Disk1:", "Disk2:"};
 const char *MsxIOControlView::hdSlotPrefix[4] {"IDE1-M:", "IDE1-S:", "IDE2-M:", "IDE2-S:"};
 
-class EmuMenuView : public MenuView
+class CustomMainMenuView : public EmuMainMenuView
 {
 private:
 	TextMenuItem msxIOControl
@@ -530,13 +527,12 @@ private:
 		{
 			if(item.active())
 			{
-				FS::current_path(EmuSystem::gamePath());// Stay in active media's directory
-				auto &msxIoMenu = *new MsxIOControlView{window()};
-				viewStack.pushAndShow(msxIoMenu, e);
+				auto &msxIoMenu = *new MsxIOControlView{attachParams()};
+				pushAndShow(msxIoMenu, e);
 			}
 			else if(EmuSystem::gameIsRunning() && activeBoardType != BOARD_MSX)
 			{
-				popup.post("Only used in MSX mode", 2);
+				EmuApp::postMessage(2, false, "Only used in MSX mode");
 			}
 		}
 	};
@@ -550,28 +546,25 @@ private:
 	}
 
 public:
-	EmuMenuView(Base::Window &win): MenuView{win, true}
+	CustomMainMenuView(ViewAttachParams attach): EmuMainMenuView{attach, true}
 	{
 		reloadItems();
-		setOnMainMenuItemOptionChanged([this](){ reloadItems(); });
+		EmuApp::setOnMainMenuItemOptionChanged([this](){ reloadItems(); });
 	}
 
 	void onShow()
 	{
-		MenuView::onShow();
+		EmuMainMenuView::onShow();
 		msxIOControl.setActive(EmuSystem::gameIsRunning() && activeBoardType == BOARD_MSX);
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new EmuMenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new VideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
+		case ViewID::MAIN_MENU: return new CustomMainMenuView(attach);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
 		default: return nullptr;
 	}
 }

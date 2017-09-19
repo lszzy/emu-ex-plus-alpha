@@ -98,7 +98,9 @@ ifdef hasSCD
  error.cpp \
  endian.cpp \
  general.cpp \
- cdrom/audioreader.cpp \
+ FileStream.cpp \
+ Stream.cpp \
+ cdrom/CDAFReader.cpp \
  cdrom/lec.cpp \
  cdrom/recover-raw.cpp \
  cdrom/galois.cpp \
@@ -118,6 +120,8 @@ else
 endif
 
 SRC += main/Main.cc \
+main/options.cc \
+main/input.cc \
 main/EmuControls.cc \
 main/EmuMenuViews.cc \
 main/Cheats.cc \

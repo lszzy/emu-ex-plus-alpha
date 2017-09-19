@@ -1,11 +1,11 @@
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
 #include "EmuCheatViews.hh"
 #include "internal.hh"
 #include "input.h"
 #include "io_ctrl.h"
 
-class EmuVideoOptionView : public VideoOptionView
+class CustomVideoOptionView : public VideoOptionView
 {
 	TextMenuItem videoSystemItem[3]
 	{
@@ -22,14 +22,14 @@ class EmuVideoOptionView : public VideoOptionView
 	};
 
 public:
-	EmuVideoOptionView(Base::Window &win): VideoOptionView{win, true}
+	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&videoSystem);
 	}
 };
 
-class EmuAudioOptionView : public AudioOptionView
+class CustomAudioOptionView : public AudioOptionView
 {
 	BoolMenuItem smsFM
 	{
@@ -43,14 +43,14 @@ class EmuAudioOptionView : public AudioOptionView
 	};
 
 public:
-	EmuAudioOptionView(Base::Window &win): AudioOptionView{win, true}
+	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&smsFM);
 	}
 };
 
-class EmuInputOptionView : public TableView
+class CustomInputOptionView : public TableView
 {
 	BoolMenuItem sixButtonPad
 	{
@@ -60,10 +60,6 @@ class EmuInputOptionView : public TableView
 		{
 			option6BtnPad = item.flipBoolValue(*this);
 			setupMDInput();
-			#ifdef CONFIG_VCONTROLS_GAMEPAD
-			EmuControls::setupVControllerVars();
-			vController.place();
-			#endif
 		}
 	};
 
@@ -132,11 +128,11 @@ class EmuInputOptionView : public TableView
 	};
 
 public:
-	EmuInputOptionView(Base::Window &win):
+	CustomInputOptionView(ViewAttachParams attach):
 		TableView
 		{
 			"Input Options",
-			win,
+			attach,
 			[this](const TableView &)
 			{
 				return 3;
@@ -154,7 +150,7 @@ public:
 	{}
 };
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomSystemOptionView : public SystemOptionView
 {
 	BoolMenuItem bigEndianSram
 	{
@@ -162,7 +158,7 @@ class EmuSystemOptionView : public SystemOptionView
 		(bool)optionBigEndianSram,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
-			auto &ynAlertView = *new YesNoAlertView{window(),
+			auto &ynAlertView = *new YesNoAlertView{attachParams(),
 				"Warning, this changes the format of SRAM saves files. "
 				"Turn on to make them compatible with other emulators like Gens. "
 				"Any SRAM loaded with the incorrect setting will be corrupted."};
@@ -172,7 +168,7 @@ class EmuSystemOptionView : public SystemOptionView
 					view.dismiss();
 					optionBigEndianSram = item.flipBoolValue(*this);
 				});
-			modalViewController.pushAndShow(ynAlertView, e);
+			EmuApp::pushAndShowModalView(ynAlertView, e);
 		}
 	};
 
@@ -249,10 +245,10 @@ class EmuSystemOptionView : public SystemOptionView
 				auto idx = regionCodeToIdx(region);
 				logMsg("set bios at idx %d to %s", idx, regionCodeToStrBuffer(region).data());
 				printBiosMenuEntryStr(cdBiosPathStr[idx], region);
-				cdBiosPath[idx].compile(projP);
+				cdBiosPath[idx].compile(renderer(), projP);
 			},
-			hasMDExtension, window()};
-		viewStack.pushAndShow(biosSelectMenu, e);
+			hasMDExtension, attachParams()};
+		pushAndShow(biosSelectMenu, e);
 	}
 
 	void cdBiosPathInit()
@@ -267,7 +263,7 @@ class EmuSystemOptionView : public SystemOptionView
 	#endif
 
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&bigEndianSram);
@@ -279,21 +275,19 @@ public:
 };
 
 #ifndef NO_SCD
-constexpr const char *EmuSystemOptionView::biosHeadingStr[3];
+constexpr const char *CustomSystemOptionView::biosHeadingStr[3];
 #endif
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new MenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new EmuVideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new EmuAudioOptionView(win);
-		case ViewID::INPUT_OPTIONS: return new EmuInputOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
-		case ViewID::EDIT_CHEATS: return new EmuEditCheatListView(win);
-		case ViewID::LIST_CHEATS: return new EmuCheatsView(win);
+		case ViewID::VIDEO_OPTIONS: return new CustomVideoOptionView(attach);
+		case ViewID::AUDIO_OPTIONS: return new CustomAudioOptionView(attach);
+		case ViewID::INPUT_OPTIONS: return new CustomInputOptionView(attach);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
+		case ViewID::EDIT_CHEATS: return new EmuEditCheatListView(attach);
+		case ViewID::LIST_CHEATS: return new EmuCheatsView(attach);
 		default: return nullptr;
 	}
 }

@@ -77,27 +77,24 @@ static OSStatus outputCallback(void *inRefCon, AudioUnitRenderActionFlags *ioAct
 	return 0;
 }
 
-static CallResult openUnit(AudioStreamBasicDescription &fmt, uint bufferSize)
+static std::error_code openUnit(AudioStreamBasicDescription &fmt, uint bufferSize)
 {
 	logMsg("creating unit %dHz %d channels", (int)fmt.mSampleRate, (int)fmt.mChannelsPerFrame);
-
 	if(!rBuff.init(bufferSize))
 	{
-		return OUT_OF_MEMORY;
+		return {ENOMEM, std::system_category()};
 	}
-
 	auto err = AudioUnitSetProperty(outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
 			0, &fmt, sizeof(AudioStreamBasicDescription));
 	if(err)
 	{
 		logErr("error %d setting stream format", (int)err);
 		rBuff.deinit();
-		return INVALID_PARAMETER;
+		return {EINVAL, std::system_category()};
 	}
 	AudioUnitInitialize(outputUnit);
 	isOpen_ = true;
-
-	return OK;
+	return {};
 }
 
 static void init()
@@ -118,7 +115,7 @@ static void init()
 	auto err = AudioComponentInstanceNew(defaultOutput, &outputUnit);
 	if(!outputUnit)
 	{
-		bug_exit("error creating output unit: %d", (int)err);
+		bug_unreachable("error creating output unit: %d", (int)err);
 	}
 	AURenderCallbackStruct renderCallbackProp =
 	{
@@ -129,16 +126,16 @@ static void init()
 	    0, &renderCallbackProp, sizeof(renderCallbackProp));
 	if(err)
 	{
-		bug_exit("error setting callback: %d", (int)err);
+		bug_unreachable("error setting callback: %d", (int)err);
 	}
 }
 
-CallResult openPcm(const PcmFormat &format)
+std::error_code openPcm(const PcmFormat &format)
 {
 	if(isOpen())
 	{
 		logWarn("audio unit already open");
-		return OK;
+		return {};
 	}
 	if(unlikely(!isInit()))
 		init();

@@ -27,7 +27,7 @@ static void initAllocDev()
 {
 	if(allocDev)
 		return;
-	if(libhardware_dl() != OK)
+	if(!libhardware_dl())
 	{
 		logErr("Incompatible libhardware.so");
 		return;
@@ -43,7 +43,16 @@ static void initAllocDev()
 		logErr("Can't load allocator device");
 		return;
 	}
-	assert(allocDev->free);
+	if(!allocDev->alloc || !allocDev->free)
+	{
+		logErr("Missing alloc/free functions");
+		if(allocDev->common.close)
+			gralloc_close(allocDev);
+		else
+			logWarn("Missing device close function");
+		allocDev = {};
+		return;
+	}
 	logMsg("alloc device:%p", allocDev);
 }
 
@@ -134,7 +143,7 @@ android_native_buffer_t *GraphicBuffer::getNativeBuffer()
 
 bool GraphicBuffer::hasBufferMapper()
 {
-	return grallocMod;
+	return allocDev;
 }
 
 }

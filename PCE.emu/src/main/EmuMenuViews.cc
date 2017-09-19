@@ -1,32 +1,28 @@
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
+#include <emuframework/EmuInput.hh>
 #include "internal.hh"
 
-class EmuInputOptionView : public TableView
+class CustomInputOptionView : public TableView
 {
 	BoolMenuItem sixButtonPad
 	{
 		"6-button Gamepad",
-		PCE_Fast::AVPad6Enabled[0],
+		useSixButtonPad,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			bool on = item.flipBoolValue(*this);
-			PCE_Fast::AVPad6Enabled[0] = on;
-			PCE_Fast::AVPad6Enabled[1] = on;
-			#ifdef CONFIG_VCONTROLS_GAMEPAD
-			vController.gp.activeFaceBtns = on ? 6 : 2;
-			EmuControls::setupVControllerVars();
-			vController.place();
-			#endif
+			useSixButtonPad = on;
+			EmuControls::setActiveFaceButtons(on ? 6 : 2);
 		}
 	};
 
 public:
-	EmuInputOptionView(Base::Window &win):
+	CustomInputOptionView(ViewAttachParams attach):
 		TableView
 		{
 			"Input Options",
-			win,
+			attach,
 			[this](const TableView &)
 			{
 				return 1;
@@ -39,7 +35,7 @@ public:
 	{}
 };
 
-class EmuSystemOptionView : public SystemOptionView
+class CustomSystemOptionView : public SystemOptionView
 {
 	char sysCardPathStr[256]{};
 
@@ -53,10 +49,10 @@ class EmuSystemOptionView : public SystemOptionView
 				{
 					logMsg("set bios %s", ::sysCardPath.data());
 					printBiosMenuEntryStr(sysCardPathStr);
-					sysCardPath.compile(projP);
+					sysCardPath.compile(renderer(), projP);
 				},
-				hasHuCardExtension, window()};
-			viewStack.pushAndShow(biosSelectMenu, e);
+				hasHuCardExtension, attachParams()};
+			pushAndShow(biosSelectMenu, e);
 		}
 	};
 
@@ -77,7 +73,7 @@ class EmuSystemOptionView : public SystemOptionView
 	};
 
 public:
-	EmuSystemOptionView(Base::Window &win): SystemOptionView{win, true}
+	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&arcadeCard);
@@ -86,16 +82,12 @@ public:
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new MenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new VideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::INPUT_OPTIONS: return new EmuInputOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new EmuSystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
+		case ViewID::INPUT_OPTIONS: return new CustomInputOptionView(attach);
+		case ViewID::SYSTEM_OPTIONS: return new CustomSystemOptionView(attach);
 		default: return nullptr;
 	}
 }

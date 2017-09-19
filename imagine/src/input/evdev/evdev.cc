@@ -24,12 +24,11 @@
 #include <imagine/util/string.h>
 #include <imagine/fs/FS.hh>
 #include <imagine/base/Base.hh>
-#include <imagine/base/EventLoopFileSource.hh>
 #include <imagine/input/Input.hh>
 #include <imagine/input/AxisKeyEmu.hh>
 #include "evdev.hh"
 #include "../private.hh"
-#include <imagine/util/container/ArrayList.hh>
+#include <vector>
 
 #define DEV_NODE_PATH "/dev/input"
 static const uint MAX_STICK_AXES = 6; // 6 possible axes defined in key codes
@@ -121,8 +120,8 @@ static void removeFromSystem(int fd);
 
 struct EvdevInputDevice : public Device
 {
-	constexpr EvdevInputDevice() {}
-	EvdevInputDevice(int id, int fd, uint type):
+	EvdevInputDevice() {}
+	EvdevInputDevice(int id, int fd, uint type, const char *name):
 		Device{0, Event::MAP_SYSTEM, type, name},
 		id{id}, fd{fd}
 	{}
@@ -133,8 +132,7 @@ struct EvdevInputDevice : public Device
 		AxisKeyEmu<int> keyEmu;
 		bool active = 0;
 	} axis[ABS_HAT3Y];
-	Base::EventLoopFileSource fdSrc;
-	char name[80] {0};
+	Base::FDEventSource fdSrc;
 
 	void setEnumId(int id) { devId = id; }
 
@@ -241,12 +239,12 @@ struct EvdevInputDevice : public Device
 	void addPollEvent()
 	{
 		assert(fd >= 0);
-		fdSrc.init(fd,
+		fdSrc = {fd, {},
 			[this](int fd, int pollEvents)
 			{
 				if(unlikely(pollEvents & Base::POLLEV_ERR))
 				{
-					logMsg("error %d in input fd %d (%s)", errno, fd, name);
+					logMsg("error %d in input fd %d (%s)", errno, fd, name());
 					removeFromSystem(fd);
 					return 0;
 				}
@@ -262,24 +260,24 @@ struct EvdevInputDevice : public Device
 					}
 					if(len == -1 && errno != EAGAIN)
 					{
-						logMsg("error %d reading from input fd %d (%s)", errno, fd, name);
+						logMsg("error %d reading from input fd %d (%s)", errno, fd, name());
 						removeFromSystem(fd);
 						return 0;
 					}
 				}
 				return 1;
-			});
+			}};
 	}
 
 	void close()
 	{
-		fdSrc.deinit();
+		fdSrc.removeFromEventLoop();
 		::close(fd);
 		removeDevice(*this);
 		onDeviceChange.callCopySafe(*this, { Device::Change::REMOVED });
 	}
 
-	void setJoystickAxisAsDpadBits(uint axisMask) override
+	void setJoystickAxisAsDpadBits(uint axisMask) final
 	{
 		Key jsKey[4] {Keycode::JS1_XAXIS_NEG, Keycode::JS1_XAXIS_POS, Keycode::JS1_YAXIS_NEG, Keycode::JS1_YAXIS_POS};
 		Key dpadKey[4] {Keycode::LEFT, Keycode::RIGHT, Keycode::UP, Keycode::DOWN};
@@ -290,25 +288,23 @@ struct EvdevInputDevice : public Device
 		axis[ABS_Y].keyEmu.highKey = axis[ABS_Y].keyEmu.highSysKey = setKey[3];
 	}
 
-	uint joystickAxisAsDpadBits() override
+	uint joystickAxisAsDpadBits() final
 	{
 		return axis[ABS_X].keyEmu.lowKey == Keycode::LEFT;
 	}
 };
 
-static StaticArrayList<EvdevInputDevice*, 16> evDevice;
+static std::vector<std::unique_ptr<EvdevInputDevice>> evDevice{};
 
 static void removeFromSystem(int fd)
 {
 	forEachInContainer(evDevice, e)
 	{
-		auto dev = *e;
+		auto &dev = *e;
 		if(dev->fd == fd)
 		{
 			dev->close();
-			delete dev;
-			evDevice.erase(e);
-			//e_it.removeElem();
+			evDevice.erase(e.it);
 			return;
 		}
 	}
@@ -369,13 +365,14 @@ static bool processDevNode(const char *path, int id, bool notify)
 		close(fd);
 		return false;
 	}
-	auto evDev = new EvdevInputDevice(id, fd, Device::TYPE_BIT_GAMEPAD);
-	evDevice.push_back(evDev);
-	if(ioctl(fd, EVIOCGNAME(sizeof(evDev->name)), evDev->name) < 0)
+	std::array<char, 80> nameStr{};
+	if(ioctl(fd, EVIOCGNAME(sizeof(nameStr)), nameStr.data()) < 0)
 	{
 		logWarn("unable to get device name");
-		string_copy(evDev->name, "Unknown");
+		string_copy(nameStr, "Unknown");
 	}
+	evDevice.emplace_back(std::make_unique<EvdevInputDevice>(id, fd, Device::TYPE_BIT_GAMEPAD, nameStr.data()));
+	auto &evDev = evDevice.back();
 	bool isJoystick = evDev->setupJoystickBits();
 
 	fd_setNonblock(fd, 1);
@@ -386,7 +383,7 @@ static bool processDevNode(const char *path, int id, bool notify)
 	{
 		if(e->map() != Event::MAP_SYSTEM)
 			continue;
-		if(string_equal(e->name(), evDev->name) && e->enumId() == devId)
+		if(string_equal(e->name(), evDev->name()) && e->enumId() == devId)
 			devId++;
 	}
 	evDev->setEnumId(devId);
@@ -410,7 +407,7 @@ static bool processDevNodeName(const char *name, FS::PathString &path, uint &id)
 	return true;
 }
 
-void initEvdev()
+void initEvdev(Base::EventLoop loop)
 {
 	logMsg("setting up inotify for hotplug");
 	{
@@ -419,8 +416,8 @@ void initEvdev()
 		{
 			auto watch = inotify_add_watch(inputDevNotifyFd, DEV_NODE_PATH, IN_CREATE | IN_ATTRIB);
 			fd_setNonblock(inputDevNotifyFd, 1);
-			static Base::EventLoopFileSource evdevSrc;
-			evdevSrc.init(inputDevNotifyFd,
+			static Base::FDEventSource evdevSrc;
+			evdevSrc = {inputDevNotifyFd, loop,
 				[](int fd, int)
 				{
 					char event[sizeof(struct inotify_event) + 2048];
@@ -452,7 +449,7 @@ void initEvdev()
 						} while(len);
 					}
 					return 1;
-				});
+				}};
 		}
 		else
 		{
@@ -461,14 +458,9 @@ void initEvdev()
 	}
 
 	logMsg("checking device nodes");
-	CallResult dirResult = OK;
-	for(auto &entry : FS::directory_iterator{DEV_NODE_PATH, dirResult})
+	std::error_code err;
+	for(auto &entry : FS::directory_iterator{DEV_NODE_PATH, err})
 	{
-		if(evDevice.isFull())
-		{
-			logMsg("device list is full");
-			break;
-		}
 		auto filename = entry.name();
 		if(entry.type() != FS::file_type::character || !strstr(filename, "event"))
 			continue;
@@ -478,7 +470,7 @@ void initEvdev()
 			continue;
 		processDevNode(path.data(), id, false);
 	}
-	if(dirResult != OK)
+	if(err)
 	{
 		logErr("can't open " DEV_NODE_PATH);
 		return;

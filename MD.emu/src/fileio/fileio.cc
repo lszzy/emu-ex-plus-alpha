@@ -16,10 +16,10 @@ uint hasROMExtension(const char *name)
 
 int loadArchive(void *buff, uint bytes, const char *path, FS::FileString &nameInArchive)
 {
-	if(hasArchiveExtension(path))
+	if(EmuApp::hasArchiveExtension(path))
 	{
-		CallResult res = OK;
-		for(auto &entry : FS::ArchiveIterator{path, res})
+		std::error_code ec{};
+		for(auto &entry : FS::ArchiveIterator{path, ec})
 		{
 			if(entry.type() == FS::file_type::directory)
 			{
@@ -34,7 +34,7 @@ int loadArchive(void *buff, uint bytes, const char *path, FS::FileString &nameIn
 				return io.read(buff, bytes);
 			}
 		}
-		if(res != OK)
+		if(ec)
 		{
 			logErr("error opening archive:%s", path);
 			return -1;
@@ -45,7 +45,7 @@ int loadArchive(void *buff, uint bytes, const char *path, FS::FileString &nameIn
 	else
 	{
 		FileIO file;
-		file.open(path);
+		file.open(path, IO::AccessHint::ALL);
 		if(!file)
 		{
 			return -1;

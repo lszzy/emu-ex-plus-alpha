@@ -14,20 +14,18 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <emuframework/BundledGamesView.hh>
-#include <emuframework/EmuSystem.hh>
+#include <emuframework/EmuApp.hh>
 #include <emuframework/FilePicker.hh>
 #include <imagine/logger/logger.h>
 #include <imagine/io/FileIO.hh>
 #include <imagine/io/BufferMapIO.hh>
 #include <imagine/fs/ArchiveFS.hh>
 
-void loadGameCompleteFromRecentItem(uint result, Input::Event e);
-
-BundledGamesView::BundledGamesView(Base::Window &win):
+BundledGamesView::BundledGamesView(ViewAttachParams attach):
 	TableView
 	{
 		"Bundled Games",
-		win,
+		attach,
 		[this](const TableView &)
 		{
 			return 1;
@@ -40,58 +38,19 @@ BundledGamesView::BundledGamesView(Base::Window &win):
 {
 	auto &info = EmuSystem::bundledGameInfo(0);
 	game[0] = {info.displayName,
-		[&info](TextMenuItem &t, View &, Input::Event ev)
+		[&info, &r = attach.renderer](TextMenuItem &t, View &view, Input::Event e)
 		{
-			auto file = openAppAssetIO(info.assetName);
+			auto file = openAppAssetIO(info.assetName, IO::AccessHint::ALL);
 			if(!file)
 			{
 				logErr("error opening bundled game asset: %s", info.assetName);
 				return;
 			}
-			int loadGameRes;
-			if(string_hasDotExtension(info.assetName, "lzma") || hasArchiveExtension(info.assetName))
-			{
-				ArchiveIO io{};
-				CallResult res = OK;
-				for(auto &entry : FS::ArchiveIterator{GenericIO{std::move(file)}, res})
+			EmuApp::createSystemWithMedia(file.makeGeneric(), "", info.assetName, e,
+				[&r](Input::Event e)
 				{
-					if(entry.type() == FS::file_type::directory)
-					{
-						continue;
-					}
-					auto name = entry.name();
-					logMsg("archive file entry:%s", name);
-					if(EmuSystem::defaultFsFilter(name))
-					{
-						io = entry.moveIO();
-						break;
-					}
-				}
-				if(res != OK)
-				{
-					logErr("error opening asset archive:%s", info.assetName);
-					return;
-				}
-				if(!io)
-				{
-					logErr("no recognized file extensions in asset archive:%s", info.assetName);
-					return;
-				}
-				loadGameRes = EmuSystem::loadGameFromIO(io, info.assetName, io.name());
-			}
-			else
-			{
-				loadGameRes = EmuSystem::loadGameFromIO(file, info.assetName, info.assetName);
-			}
-			file.close();
-			if(loadGameRes == 1)
-			{
-				loadGameCompleteFromRecentItem(1, ev); // has same behavior as if loading from recent item
-			}
-			else if(loadGameRes == 0)
-			{
-				EmuSystem::clearGamePaths();
-			}
+					EmuApp::launchSystemWithResumePrompt(r, e, false);
+				});
 		}};
 }
 

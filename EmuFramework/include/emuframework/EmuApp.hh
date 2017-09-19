@@ -15,88 +15,86 @@
 	You should have received a copy of the GNU General Public License
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <memory>
 #include <imagine/base/Base.hh>
 #include <imagine/input/Input.hh>
+#include <imagine/gui/TextEntry.hh>
+#include <imagine/gui/MenuItem.hh>
 #include <imagine/gui/NavView.hh>
-#include <imagine/gui/ViewStack.hh>
-#include <imagine/fs/WorkDirStack.hh>
-#include <imagine/gfx/AnimatedViewport.hh>
+#include <imagine/io/IO.hh>
+#include <imagine/fs/FSDefs.hh>
 #include <emuframework/EmuSystem.hh>
 #include <emuframework/EmuView.hh>
 #include <emuframework/EmuVideo.hh>
-#include <emuframework/EmuVideoLayer.hh>
-#include <emuframework/MsgPopup.hh>
+#include <emuframework/Option.hh>
 #include <emuframework/FileUtils.hh>
-#include <emuframework/InputManagerView.hh>
-#ifdef CONFIG_EMUFRAMEWORK_VCONTROLS
-#include <emuframework/TouchConfigView.hh>
-#endif
 
-enum AssetID { ASSET_ARROW, ASSET_CLOSE, ASSET_ACCEPT, ASSET_GAME_ICON, ASSET_MENU, ASSET_FAST_FORWARD };
-
-class EmuNavView : public BasicNavView
+class EmuApp
 {
 public:
-	EmuNavView() {}
-	void onLeftNavBtn(Input::Event e) override;
-	void onRightNavBtn(Input::Event e) override;
-	void draw(const Base::Window &win, const Gfx::ProjectionPlane &projP) override;
+	using OnMainMenuOptionChanged = DelegateFunc<void()>;
+	using CreateSystemCompleteDelegate = DelegateFunc<void (Input::Event e)>;
+	using NavView = BasicNavView;
+
+	enum class ViewID
+	{
+		MAIN_MENU,
+		VIDEO_OPTIONS,
+		AUDIO_OPTIONS,
+		INPUT_OPTIONS,
+		SYSTEM_OPTIONS,
+		GUI_OPTIONS,
+		EDIT_CHEATS,
+		LIST_CHEATS,
+	};
+
+	static bool autoSaveStateDefault;
+	static bool hasIcon;
+
+	static bool willCreateSystem(ViewAttachParams attach, Input::Event e);
+	static void createSystemWithMedia(GenericIO io, const char *path, const char *name,
+		Input::Event e, CreateSystemCompleteDelegate onComplete);
+	static void exitGame(bool allowAutosaveState = true);
+	static void reloadGame();
+	static void onMainWindowCreated(ViewAttachParams attach, Input::Event e);
+	static void onCustomizeNavView(NavView &v);
+	static void pushAndShowNewCollectTextInputView(ViewAttachParams attach, Input::Event e,
+		const char *msgText, const char *initialContent, CollectTextInputView::OnTextDelegate onText);
+	static void pushAndShowNewYesNoAlertView(ViewAttachParams attach, Input::Event e,
+		const char *label, const char *choice1, const char *choice2,
+		TextMenuItem::SelectDelegate onYes, TextMenuItem::SelectDelegate onNo);
+	template<class C = TextMenuItem::SelectDelegate, class C2 = TextMenuItem::SelectDelegate>
+	static void pushAndShowNewYesNoAlertView(ViewAttachParams attach, Input::Event e,
+		const char *label, const char *yesStr, const char *noStr,
+		C &&onYes, C2 &&onNo)
+	{
+		pushAndShowNewYesNoAlertView(attach, e, label, yesStr, noStr,
+			TextMenuItem::wrapSelectDelegate(onYes), TextMenuItem::wrapSelectDelegate(onNo));
+	}
+	static void pushAndShowModalView(View &v, Input::Event e);
+	static void popModalViews();
+	static void popMenuToRoot();
+	static void restoreMenuFromGame();
+	static void launchSystemWithResumePrompt(Gfx::Renderer &r, Input::Event e, bool addToRecent);
+	static bool hasArchiveExtension(const char *name);
+	static void setOnMainMenuItemOptionChanged(OnMainMenuOptionChanged func);
+	static void refreshCheatViews();
+	[[gnu::format(printf, 3, 4)]]
+	static void printfMessage(uint secs, bool error, const char *format, ...);
+	static void postMessage(const char *msg);
+	static void postMessage(bool error, const char *msg);
+	static void postMessage(uint secs, bool error, const char *msg);
+	static void unpostMessage();
+	static void saveAutoState();
+	static bool loadAutoState();
+	static EmuSystem::Error saveState(const char *path);
+	static EmuSystem::Error saveStateWithSlot(int slot);
+	static EmuSystem::Error loadState(const char *path);
+	static EmuSystem::Error loadStateWithSlot(int slot);
+	static void setDefaultVControlsButtonSize(int size);
+	static void setDefaultVControlsButtonSpacing(int spacing);
+	static void setDefaultVControlsButtonStagger(int stagger);
+	static FS::PathString mediaSearchPath();
+	static FS::PathString firmwareSearchPath();
+	static void setFirmwareSearchPath(const char *path);
+	static View *makeCustomView(ViewAttachParams attach, ViewID id);
 };
-
-struct AppWindowData
-{
-	Base::Window win{};
-	Gfx::Viewport viewport() { return projectionPlane.viewport; }
-	Gfx::Mat4 projectionMat{};
-	Gfx::ProjectionPlane projectionPlane{};
-	Gfx::AnimatedViewport animatedViewport{};
-	bool focused = true;
-
-	constexpr AppWindowData() {};
-};
-
-using OnMainMenuOptionChanged = DelegateFunc<void()>;
-
-extern AppWindowData mainWin, extraWin;
-extern AppWindowData *emuWin;
-extern EmuNavView viewNav;
-extern EmuVideo emuVideo;
-extern EmuVideoLayer emuVideoLayer;
-extern ViewStack viewStack;
-extern BasicViewController modalViewController;
-extern MsgPopup popup;
-extern const char *launchGame;
-extern DelegateFunc<void ()> onUpdateInputDevices;
-extern bool menuViewIsActive;
-#ifdef CONFIG_EMUFRAMEWORK_VCONTROLS
-extern SysVController vController;
-#endif
-extern WorkDirStack<1> workDirStack;
-#ifdef __ANDROID__
-extern std::unique_ptr<Base::UserActivityFaker> userActivityFaker;
-#endif
-
-Gfx::PixmapTexture &getAsset(AssetID assetID);
-Gfx::PixmapTexture *getCollectTextCloseAsset();
-void handleInputEvent(Base::Window &win, Input::Event e);
-void handleOpenFileCommand(const char *filename);
-bool isMenuDismissKey(Input::Event e);
-void startGameFromMenu();
-void restoreMenuFromGame();
-void closeGame(bool allowAutosaveState = true);
-void applyOSNavStyle(bool inGame);
-View *makeEditCheatListView(Base::Window &win);
-const char *appViewTitle();
-const char *appName();
-const char *appID();
-void setEmuViewOnExtraWindow(bool on);
-void placeEmuViews();
-void placeElements();
-void startViewportAnimation(AppWindowData &winData);
-void updateAndDrawEmuVideo();
-void onMainMenuItemOptionChanged();
-void setOnMainMenuItemOptionChanged(OnMainMenuOptionChanged func);
-void setCPUNeedsLowLatency(bool needed);
-
-static constexpr const char *strftimeFormat = "%x  %r";

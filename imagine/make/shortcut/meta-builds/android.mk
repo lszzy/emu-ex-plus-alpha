@@ -9,7 +9,7 @@ all : android-apk
 
 android_minSDK ?= 9
 android_baseModuleSDK := 9
-android_targetSDK ?= 23
+android_targetSDK ?= 24
 
 android_metadata_soName ?= main
 android_makefileOpts += android_metadata_soName=$(android_metadata_soName)
@@ -82,6 +82,10 @@ $(android_antProperties) :
 	@mkdir -p $(@D)
 	ln -s $(ANDROID_ANT_PROPERTIES) $@
 
+endif
+
+ifdef LTO_MODE
+ android_makefileOpts += LTO_MODE=$(LTO_MODE)
 endif
 
 resPath := $(projectPath)/res

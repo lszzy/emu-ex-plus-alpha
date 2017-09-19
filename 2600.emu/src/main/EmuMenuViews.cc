@@ -13,11 +13,17 @@
 	You should have received a copy of the GNU General Public License
 	along with 2600.emu.  If not, see <http://www.gnu.org/licenses/> */
 
+// TODO: Some Stella types collide with MacTypes.h
+#define BytePtr BytePtrMac
+#define Debugger DebuggerMac
 #include <emuframework/OptionView.hh>
-#include <emuframework/MenuView.hh>
+#include <emuframework/EmuMainMenuView.hh>
+#undef BytePtr
+#undef Debugger
+#undef HAVE_UNISTD_H
 #include "internal.hh"
 
-class EmuVideoOptionView : public VideoOptionView
+class CustomVideoOptionView : public VideoOptionView
 {
 	TextMenuItem tvPhosphorItem[3];
 	MultiChoiceMenuItem tvPhosphor;
@@ -52,7 +58,7 @@ class EmuVideoOptionView : public VideoOptionView
 	}
 
 public:
-	EmuVideoOptionView(Base::Window &win): VideoOptionView{win, true},
+	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true},
 	tvPhosphorItem
 	{
 		{"Off", []() { setTVPhosphor(0); }},
@@ -123,11 +129,11 @@ class VCSSwitchesView : public TableView
 	};
 
 public:
-	VCSSwitchesView(Base::Window &win):
+	VCSSwitchesView(ViewAttachParams attach):
 		TableView
 		{
 			"Switches",
-			win,
+			attach,
 			[this](const TableView &)
 			{
 				return 3;
@@ -145,7 +151,7 @@ public:
 		}
 	{}
 
-	void onShow() override
+	void onShow() final
 	{
 		diff1.setBoolValue(p1DiffB, *this);
 		diff2.setBoolValue(p2DiffB, *this);
@@ -154,7 +160,7 @@ public:
 
 };
 
-class EmuMenuView : public MenuView
+class CustomMainMenuView : public EmuMainMenuView
 {
 private:
 	TextMenuItem switches
@@ -164,8 +170,8 @@ private:
 		{
 			if(EmuSystem::gameIsRunning())
 			{
-				auto &vcsSwitchesView = *new VCSSwitchesView{window()};
-				viewStack.pushAndShow(vcsSwitchesView, e);
+				auto &vcsSwitchesView = *new VCSSwitchesView{attachParams()};
+				pushAndShow(vcsSwitchesView, e);
 			}
 		}
 	};
@@ -179,28 +185,25 @@ private:
 	}
 
 public:
-	EmuMenuView(Base::Window &win): MenuView{win, true}
+	CustomMainMenuView(ViewAttachParams attach): EmuMainMenuView{attach, true}
 	{
 		reloadItems();
-		setOnMainMenuItemOptionChanged([this](){ reloadItems(); });
+		EmuApp::setOnMainMenuItemOptionChanged([this](){ reloadItems(); });
 	}
 
-	void onShow() override
+	void onShow() final
 	{
-		MenuView::onShow();
+		EmuMainMenuView::onShow();
 		switches.setActive(EmuSystem::gameIsRunning());
 	}
 };
 
-View *EmuSystem::makeView(Base::Window &win, ViewID id)
+View *EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::MAIN_MENU: return new EmuMenuView(win);
-		case ViewID::VIDEO_OPTIONS: return new EmuVideoOptionView(win);
-		case ViewID::AUDIO_OPTIONS: return new AudioOptionView(win);
-		case ViewID::SYSTEM_OPTIONS: return new SystemOptionView(win);
-		case ViewID::GUI_OPTIONS: return new GUIOptionView(win);
+		case ViewID::MAIN_MENU: return new CustomMainMenuView(attach);
+		case ViewID::VIDEO_OPTIONS: return new CustomVideoOptionView(attach);
 		default: return nullptr;
 	}
 }

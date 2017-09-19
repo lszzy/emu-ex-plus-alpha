@@ -16,6 +16,7 @@
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <vector>
+#include <system_error>
 #include <imagine/config/defs.hh>
 #include <imagine/gfx/GfxText.hh>
 #include <imagine/gfx/GeomRect.hh>
@@ -23,7 +24,6 @@
 #include <imagine/gfx/Texture.hh>
 #include <imagine/input/Input.hh>
 #include <imagine/fs/FS.hh>
-#include <imagine/resource/face/ResourceFace.hh>
 #include <imagine/gui/TableView.hh>
 #include <imagine/gui/MenuItem.hh>
 #include <imagine/util/DelegateFunc.hh>
@@ -34,75 +34,63 @@ class FSPicker : public View
 {
 public:
 	using FilterFunc = DelegateFunc<bool(FS::directory_entry &entry)>;
-	using OnSelectFileDelegate = DelegateFunc<void (FSPicker &picker, const char* name, Input::Event e)>;
+	using OnChangePathDelegate = DelegateFunc<void (FSPicker &picker, FS::PathString prevPath, Input::Event e)>;
+	using OnSelectFileDelegate = DelegateFunc<void (FSPicker &picker, const char *name, Input::Event e)>;
 	using OnCloseDelegate = DelegateFunc<void (FSPicker &picker, Input::Event e)>;
-	using OnPathReadError = DelegateFunc<void (FSPicker &picker, CallResult res)>;
+	using OnPathReadError = DelegateFunc<void (FSPicker &picker, std::error_code ec)>;
 	static constexpr bool needsUpDirControl = !Config::envIsPS3;
 
-	FSPicker(Base::Window &win, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes,
-			FilterFunc filter = {}, bool singleDir = false, ResourceFace *face = View::defaultFace);
+	FSPicker(ViewAttachParams attach, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes,
+			FilterFunc filter = {}, bool singleDir = false, Gfx::GlyphTextureSet *face = &View::defaultFace);
 	void place() override;
-	void inputEvent(Input::Event e) override;
+	bool inputEvent(Input::Event e) override;
 	void draw() override;
 	void onAddedToController(Input::Event e) override;
+	void setOnChangePath(OnChangePathDelegate del);
 	void setOnSelectFile(OnSelectFileDelegate del);
 	void setOnClose(OnCloseDelegate del);
+	void setOnPathReadError(OnPathReadError del);
 	void onLeftNavBtn(Input::Event e);
 	void onRightNavBtn(Input::Event e);
-	void setOnPathReadError(OnPathReadError del);
-	CallResult setPath(const char *path, bool forcePathChange, Input::Event e);
-	CallResult setPath(const char *path, bool forcePathChange);
-	CallResult setPath(FS::PathString path, bool forcePathChange, Input::Event e)
+	std::error_code setPath(const char *path, bool forcePathChange, Input::Event e);
+	std::error_code setPath(const char *path, bool forcePathChange);
+	std::error_code setPath(FS::PathString path, bool forcePathChange, Input::Event e)
 	{
 		return setPath(path.data(), forcePathChange, e);
 	}
-	CallResult setPath(FS::PathString path, bool forcePathChange)
+	std::error_code setPath(FS::PathString path, bool forcePathChange)
 	{
 		return setPath(path.data(), forcePathChange);
 	}
+	FS::PathString path() const;
 	IG::WindowRect &viewRect() override { return viewFrame; }
 	void clearSelection() override
 	{
 		tbl.clearSelection();
 	}
+	FS::PathString makePathString(const char *base) const;
 
 protected:
-	class FSNavView : public BasicNavView
-	{
-	public:
-		FSPicker &inst;
-		FS::PathString titleStr{};
-
-		FSNavView(FSPicker &inst): inst(inst) {}
-		void onLeftNavBtn(Input::Event e) override
-		{
-			inst.onLeftNavBtn(e);
-		};
-		void onRightNavBtn(Input::Event e) override
-		{
-			inst.onRightNavBtn(e);
-		};
-		void init(ResourceFace *face, Gfx::PixmapTexture *backRes, Gfx::PixmapTexture *closeRes, bool singleDir);
-		void draw(const Base::Window &win, const Gfx::ProjectionPlane &projP) override;
-		void setTitle(const char *str);
-	};
-
 	FilterFunc filter{};
 	TableView tbl;
-	OnSelectFileDelegate onSelectFileD{};
-	OnCloseDelegate onCloseD
+	OnChangePathDelegate onChangePath_{};
+	OnSelectFileDelegate onSelectFile_{};
+	OnCloseDelegate onClose_
 	{
 		[](FSPicker &picker, Input::Event e)
 		{
 			picker.dismiss();
 		}
 	};
-	OnPathReadError onPathReadError{};
+	OnPathReadError onPathReadError_{};
 	std::vector<TextMenuItem> text{};
 	std::vector<FS::FileString> dir{};
+	FS::PathString currPath{};
 	IG::WindowRect viewFrame{};
-	ResourceFace *faceRes{};
-	FSNavView navV{*this};
+	Gfx::GlyphTextureSet *faceRes{};
+	BasicNavView navV;
+	std::array<char, 48> msgStr{};
+	Gfx::Text msgText{};
 	bool singleDir = false;
 
 	void changeDirByInput(const char *path, bool forcePathChange, Input::Event e);
